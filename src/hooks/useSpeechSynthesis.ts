@@ -137,31 +137,41 @@ export const useSpeechSynthesis = () => {
   const detectGender = (voiceName: string): 'male' | 'female' | 'unknown' => {
     const name = voiceName.toLowerCase()
     
-    // Android-specific voice patterns
+    // Enhanced Android-specific voice patterns
     const androidMalePatterns = [
-      'male', 'man', 'masculine', 'boy', 'guy', 'gentleman',
-      // Google voices
-      'google male', 'android male',
-      // Common Android male voice names
-      'david', 'daniel', 'alex', 'tom', 'thomas', 'james', 'john', 'michael',
-      'robert', 'william', 'richard', 'charles', 'mark', 'paul', 'steven',
-      'andrew', 'joshua', 'kenneth', 'kevin', 'brian', 'george', 'edward',
-      'ronald', 'timothy', 'jason', 'jeffrey', 'ryan', 'christopher', 'matthew',
+      // Explicit gender indicators
+      'male', 'man', 'masculine', 'boy', 'guy', 'gentleman', 'mr', 'sir',
+      // Google TTS voices
+      'google male', 'android male', 'google us male', 'google uk male',
       // Samsung voices
-      'samsung male', 'bixby male'
+      'samsung male', 'bixby male', 'samsung english male',
+      // Common male names in TTS
+      'david', 'daniel', 'alex', 'alexander', 'tom', 'thomas', 'james', 'john', 
+      'michael', 'robert', 'william', 'richard', 'charles', 'mark', 'paul', 
+      'steven', 'andrew', 'joshua', 'kenneth', 'kevin', 'brian', 'george', 
+      'edward', 'ronald', 'timothy', 'jason', 'jeffrey', 'ryan', 'christopher', 
+      'matthew', 'anthony', 'donald', 'steven', 'andrew', 'joshua', 'daniel',
+      // Android system voice patterns
+      'voice 1', 'voice 3', 'voice 5', 'voice 7', 'voice 9', // Odd numbers often male
+      'tts male', 'speech male', 'narrator male'
     ]
     
     const androidFemalePatterns = [
-      'female', 'woman', 'feminine', 'girl', 'lady', 'miss', 'mrs',
-      // Google voices
-      'google female', 'android female',
-      // Common Android female voice names
+      // Explicit gender indicators
+      'female', 'woman', 'feminine', 'girl', 'lady', 'miss', 'mrs', 'ms', 'madam',
+      // Google TTS voices
+      'google female', 'android female', 'google us female', 'google uk female',
+      // Samsung voices
+      'samsung female', 'bixby female', 'samsung english female',
+      // Common female names in TTS
       'samantha', 'victoria', 'susan', 'karen', 'sarah', 'lisa', 'nancy',
       'betty', 'helen', 'sandra', 'donna', 'carol', 'ruth', 'sharon',
       'michelle', 'laura', 'kimberly', 'deborah', 'dorothy', 'amy', 'angela',
       'brenda', 'emma', 'olivia', 'ava', 'isabella', 'sophia', 'charlotte',
-      // Samsung voices
-      'samsung female', 'bixby female'
+      'jennifer', 'patricia', 'maria', 'elizabeth', 'linda', 'barbara',
+      // Android system voice patterns
+      'voice 2', 'voice 4', 'voice 6', 'voice 8', 'voice 10', // Even numbers often female
+      'tts female', 'speech female', 'narrator female'
     ]
 
     // Check for explicit gender indicators first
