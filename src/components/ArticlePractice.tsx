@@ -128,13 +128,7 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
             <p className="text-xs sm:text-sm text-gray-600">Real News Content</p>
           </div>
           
-          {/* Quick Action Buttons - Top Right */}
-          <SpeechControls 
-            text={currentSentence}
-            compact={true}
-            showSettings={true}
-            className="flex-shrink-0"
-          />
+
           
           <button
             onClick={handleNewSentence}
@@ -160,20 +154,7 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
 
         {/* Practice Section */}
         <div className="text-center mb-6 sm:mb-8">
-          <div className="flex items-center justify-center space-x-2 mb-3 sm:mb-4">
-            <h4 className="text-xs sm:text-sm font-medium text-gray-500">Practice this content:</h4>
-            <button
-              onClick={isRecording ? () => setIsRecording(false) : () => setIsRecording(true)}
-              disabled={showResult}
-              className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-xs transition-all duration-200 ${
-                isRecording
-                  ? 'bg-red-500 hover:bg-red-600 animate-pulse'
-                  : 'bg-blue-500 hover:bg-blue-600'
-              }`}
-            >
-              {isRecording ? '⏹️' : '🎤'}
-            </button>
-          </div>
+          <h4 className="text-xs sm:text-sm font-medium text-gray-500 mb-3 sm:mb-4">Practice this sentence:</h4>
           
           {/* Clickable Sentence */}
           <div className="mb-4 sm:mb-6 p-3 sm:p-4 lg:p-6 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg sm:rounded-xl border-2 border-green-200 shadow-sm">
@@ -183,7 +164,54 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
           {/* Phonetic Transcription */}
           <PhoneticDisplay text={currentSentence} className="mb-4 sm:mb-6" />
 
+          {/* Timer Mode Button */}
+          <div className="flex justify-center space-x-3 mb-4">
+            <SpeechControls 
+              text={currentSentence}
+              compact={true}
+              showSettings={true}
+              className="flex-shrink-0"
+            />
 
+            <button
+              onClick={() => {
+                console.log('🎯 Article Timer mode: Click - current state:', isRecording)
+                if (isRecording) {
+                  console.log('🛑 Article Timer mode: Stopping recording...')
+                  setIsRecording(false)
+                } else {
+                  console.log('⏱️ Article Timer mode: Starting adaptive timer recording...')
+                  setIsRecording(true)
+                }
+              }}
+              disabled={showResult}
+              className={`inline-flex items-center space-x-2 px-3 sm:px-4 py-2 rounded-lg transition-colors text-sm sm:text-base select-none ${isRecording
+                ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                : 'bg-green-600 hover:bg-green-700 text-white'
+                }`}
+            >
+              <span>{isRecording ? '⏹️' : '🎤'}</span>
+              <span className="hidden sm:inline">
+                {isRecording ? 'Stop Timer' : 'Start Timer'}
+              </span>
+              <span className="sm:hidden">
+                {isRecording ? 'Stop' : 'Timer'}
+              </span>
+            </button>
+          </div>
+
+          {/* Timer Mode Info */}
+          <div className="mb-4 text-center">
+            <div className="inline-flex items-center space-x-2 text-xs text-gray-600">
+              <span>⏱️ Adaptive Timer Mode</span>
+              <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
+                Article Practice
+              </span>
+            </div>
+            <div className="mt-1 text-xs text-gray-500">
+              💡 Timer automatically adjusts based on sentence length for optimal recording
+            </div>
+          </div>
         </div>
 
         {/* Speech Recognition Component */}
