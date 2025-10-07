@@ -18,7 +18,7 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
   const [results, setResults] = useState<RecognitionResult[]>([])
   const [showResult, setShowResult] = useState(false)
   const [lastResult, setLastResult] = useState<RecognitionResult | null>(null)
-  const [holdToSpeak, setHoldToSpeak] = useState<boolean | null>(null) // null = auto-detect
+
 
   // Enhanced device detection for microphone behavior
   const deviceInfo = useMemo(() => {
@@ -47,19 +47,8 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
     }
   }, [])
 
-  // NEW: All devices use timer-based recording for maximum stability
-  const microphoneBehavior = useMemo(() => {
-    if (holdToSpeak !== null) {
-      // User has manually set preference - but we'll use timer for all
-      return 'timer'
-    }
-    
-    // All devices: Use timer-based recording (most stable for Android)
-    console.log('🎯 All devices: using click-to-start with adaptive timer (maximum stability)')
-    return 'timer'
-  }, [holdToSpeak, deviceInfo])
-
-  const isTimerMode = microphoneBehavior === 'timer'
+  // All devices use timer-based recording for maximum stability
+  console.log('🎯 All devices: using click-to-start with adaptive timer (maximum stability)')
 
   const currentSentence = lesson.sentences[currentSentenceIndex]
   const progress = ((currentSentenceIndex + (showResult ? 1 : 0)) / lesson.sentences.length) * 100
@@ -145,46 +134,16 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                 />
 
                 <button
-                  {...(isHoldMode ? {
-                    // Hold-to-speak mode (Android Chrome) - RESTORED
-                    onPointerDown: (e) => {
-                      e.preventDefault()
-                      console.log('🎤 Hold mode: Pointer down - starting recording')
+                  onClick={() => {
+                    console.log('🎯 Timer mode: Click - current state:', isRecording)
+                    if (isRecording) {
+                      console.log('🛑 Timer mode: Stopping recording...')
+                      setIsRecording(false)
+                    } else {
+                      console.log('⏱️ Timer mode: Starting adaptive timer recording...')
                       setIsRecording(true)
-                    },
-                    onPointerUp: (e) => {
-                      e.preventDefault()
-                      console.log('🛑 Hold mode: Pointer up - stopping recording')
-                      setIsRecording(false)
-                    },
-                    onPointerLeave: (e) => {
-                      e.preventDefault()
-                      console.log('🛑 Hold mode: Pointer leave - stopping recording')
-                      setIsRecording(false)
-                    },
-                    onTouchStart: (e) => {
-                      e.preventDefault()
-                      console.log('🎤 Hold mode: Touch start - starting recording')
-                      setIsRecording(true)
-                    },
-                    onTouchEnd: (e) => {
-                      e.preventDefault()
-                      console.log('🛑 Hold mode: Touch end - stopping recording')
-                      setIsRecording(false)
                     }
-                  } : {
-                    // Tap-to-toggle mode (Desktop)
-                    onClick: () => {
-                      console.log('🎤 Toggle mode: Click - current state:', isRecording)
-                      if (isRecording) {
-                        console.log('🛑 Toggle mode: Stopping recording...')
-                        setIsRecording(false)
-                      } else {
-                        console.log('🎤 Toggle mode: Starting recording...')
-                        setIsRecording(true)
-                      }
-                    }
-                  })}
+                  }}
                   disabled={showResult}
                   className={`inline-flex items-center space-x-2 px-3 sm:px-4 py-2 rounded-lg transition-colors text-sm sm:text-base select-none ${isRecording
                     ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
@@ -193,37 +152,28 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                 >
                   <span>{isRecording ? '⏹️' : '🎤'}</span>
                   <span className="hidden sm:inline">
-                    {isHoldMode 
-                      ? (isRecording ? 'Release to Stop' : 'Hold to Speak')
-                      : (isRecording ? 'Stop Recording' : 'Start Recording')
-                    }
+                    {isRecording ? 'Stop Timer' : 'Start Timer'}
                   </span>
                   <span className="sm:hidden">
-                    {isHoldMode 
-                      ? (isRecording ? 'Release' : 'Hold')
-                      : (isRecording ? 'Stop' : 'Record')
-                    }
+                    {isRecording ? 'Stop' : 'Timer'}
                   </span>
                 </button>
               </div>
             </div>
 
-            {/* Microphone Mode Toggle */}
+            {/* Timer Mode Info */}
             <div className="mt-4 text-center">
               <div className="inline-flex items-center space-x-2 text-xs text-gray-600">
-                <span>Mic Mode:</span>
-                <button
-                  onClick={() => setHoldToSpeak(!isHoldMode)}
-                  className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs transition-colors"
-                >
-                  {isHoldMode ? '📱 Hold to Speak' : '🔄 Tap to Toggle'}
-                </button>
+                <span>⏱️ Adaptive Timer Mode</span>
+                <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
+                  Maximum Stability
+                </span>
                 <span className="text-gray-400">
                   ({deviceInfo.isAndroidChrome ? 'Android' : deviceInfo.isDesktop ? 'Desktop' : 'Mobile'} detected)
                 </span>
               </div>
               <div className="mt-1 text-xs text-gray-500">
-                💡 {deviceInfo.isAndroidChrome ? 'Hold mode works better on Android' : 'Toggle mode for desktop stability'}
+                💡 Timer automatically adjusts based on sentence length for optimal recording
               </div>
             </div>
 
