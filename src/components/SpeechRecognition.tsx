@@ -32,6 +32,12 @@ const SpeechRecognition = ({
   const timeoutRef = useRef<number | null>(null)
   const restartCountRef = useRef(0)
   const isRecordingRef = useRef(false)
+  
+  // Enhanced state for robust Android handling
+  const accumulatedTranscriptRef = useRef('')
+  const lastResultTimeRef = useRef<number>(0)
+  const silenceTimeoutRef = useRef<number | null>(null)
+  const isProcessingResultRef = useRef(false)
   const { isSupported: apiSupported, hasPermission, permissionError, requestPermission } = useSpeechRecognition()
 
   const isSecure = useMemo(() => {
@@ -160,6 +166,7 @@ const SpeechRecognition = ({
         // Reset restart counter since we got a result (recognition is working)
         restartCountRef.current = 0
         setRestartAttempts(0)
+        lastResultTimeRef.current = Date.now()
 
         let finalTranscript = ''
         let interimTranscript = ''
@@ -173,17 +180,52 @@ const SpeechRecognition = ({
           }
         }
 
-        setTranscript(finalTranscript || interimTranscript)
+        // For mobile/hold mode: accumulate results instead of immediate processing
+        if (deviceType === 'mobile' || microphoneMode === 'hold') {
+          if (finalTranscript) {
+            // Add to accumulated transcript with space separator
+            const newText = finalTranscript.trim()
+            if (newText) {
+              accumulatedTranscriptRef.current = accumulatedTranscriptRef.current 
+                ? `${accumulatedTranscriptRef.current} ${newText}`.trim()
+                : newText
+              console.log('📱 Accumulated transcript:', accumulatedTranscriptRef.current)
+            }
+          }
+          
+          // Show current accumulated + interim text
+          const displayText = accumulatedTranscriptRef.current + 
+            (interimTranscript ? ` ${interimTranscript}` : '')
+          setTranscript(displayText)
 
-        if (finalTranscript) {
-          const accuracy = calculateAccuracy(targetSentence, finalTranscript)
-          const confidence = event.results[0][0].confidence || 0.8
+          // Set up silence detection for mobile
+          if (silenceTimeoutRef.current) {
+            clearTimeout(silenceTimeoutRef.current)
+          }
+          
+          // Calculate adaptive timeout based on target sentence length
+          const targetWords = targetSentence.split(' ').length
+          const adaptiveTimeout = Math.max(2000, Math.min(targetWords * 500, 8000)) // 2-8 seconds
+          
+          silenceTimeoutRef.current = setTimeout(() => {
+            console.log('🔇 Silence detected, processing accumulated result')
+            processAccumulatedResult()
+          }, adaptiveTimeout)
+          
+        } else {
+          // Desktop mode: immediate processing
+          setTranscript(finalTranscript || interimTranscript)
+          
+          if (finalTranscript) {
+            const accuracy = calculateAccuracy(targetSentence, finalTranscript)
+            const confidence = event.results[0][0].confidence || 0.8
 
-          onResult({
-            transcript: finalTranscript,
-            confidence: Math.round(confidence * 100),
-            accuracy
-          })
+            onResult({
+              transcript: finalTranscript,
+              confidence: Math.round(confidence * 100),
+              accuracy
+            })
+          }
         }
       }
 
@@ -225,14 +267,35 @@ const SpeechRecognition = ({
           isRecordingRef.current = false
           onStopRecording()
         } else {
-          // Mobile or hold-to-speak: auto-restart if still supposed to be recording
-          if (isRecordingRef.current && restartCountRef.current < 5) { // Reduced from 10 to 5 for mobile
-            console.log(`🔄 Mobile/hold mode: Attempting to restart recognition (attempt ${restartCountRef.current + 1}/5)`)
+          // Mobile or hold-to-speak: check if we should restart or process results
+          const timeSinceLastResult = Date.now() - lastResultTimeRef.current
+          const hasAccumulatedText = accumulatedTranscriptRef.current.trim().length > 0
+          
+          if (!isRecordingRef.current) {
+            // User stopped recording, process accumulated results
+            console.log('📱 User stopped recording, processing accumulated results')
+            if (hasAccumulatedText) {
+              processAccumulatedResult()
+            }
+            restartCountRef.current = 0
+            setRestartAttempts(0)
+            onStopRecording()
+          } else if (hasAccumulatedText && timeSinceLastResult > 3000) {
+            // Has text and been silent for 3+ seconds, probably done speaking
+            console.log('📱 Long silence with text, processing results')
+            processAccumulatedResult()
+            restartCountRef.current = 0
+            setRestartAttempts(0)
+            isRecordingRef.current = false
+            onStopRecording()
+          } else if (isRecordingRef.current && restartCountRef.current < 8) {
+            // Still recording and haven't hit max restarts, continue
+            console.log(`🔄 Mobile/hold mode: Attempting to restart recognition (attempt ${restartCountRef.current + 1}/8)`)
             restartCountRef.current++
             setRestartAttempts(restartCountRef.current)
 
-            // Shorter delay for mobile responsiveness
-            const delay = Math.min(300 + (restartCountRef.current * 100), 1000) // 300ms, 400ms, 500ms... up to 1s
+            // Progressive delay for stability
+            const delay = Math.min(200 + (restartCountRef.current * 100), 800) // 200ms, 300ms, 400ms... up to 800ms
             setTimeout(() => {
               if (recognitionRef.current && isRecordingRef.current) {
                 try {
@@ -240,7 +303,11 @@ const SpeechRecognition = ({
                   recognitionRef.current.start()
                 } catch (error) {
                   console.error('❌ Failed to restart recognition:', error)
-                  if (restartCountRef.current >= 5) {
+                  if (restartCountRef.current >= 8) {
+                    console.log('📱 Max restarts reached, processing any accumulated text')
+                    if (hasAccumulatedText) {
+                      processAccumulatedResult()
+                    }
                     isRecordingRef.current = false
                     setRestartAttempts(0)
                     onStopRecording()
@@ -250,6 +317,9 @@ const SpeechRecognition = ({
             }, delay)
           } else {
             console.log('🛑 Stopping recording (max restarts reached or manual stop)')
+            if (hasAccumulatedText) {
+              processAccumulatedResult()
+            }
             restartCountRef.current = 0
             setRestartAttempts(0)
             isRecordingRef.current = false
@@ -260,19 +330,54 @@ const SpeechRecognition = ({
     }
 
     return () => {
-      // Clear timeout on cleanup
+      // Clear all timeouts on cleanup
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
       }
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current)
+      }
 
-      // Reset recording state
+      // Reset all recording state
       isRecordingRef.current = false
+      accumulatedTranscriptRef.current = ''
+      isProcessingResultRef.current = false
 
       if (recognitionRef.current) {
         recognitionRef.current.stop()
       }
     }
   }, [targetSentence, onResult, onStopRecording])
+
+  // Process accumulated transcript for mobile/hold mode
+  const processAccumulatedResult = () => {
+    if (isProcessingResultRef.current) return // Prevent double processing
+    
+    const finalText = accumulatedTranscriptRef.current.trim()
+    if (!finalText) return
+    
+    console.log('🎯 Processing final accumulated result:', finalText)
+    isProcessingResultRef.current = true
+    
+    // Clear silence timeout
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current)
+      silenceTimeoutRef.current = null
+    }
+    
+    const accuracy = calculateAccuracy(targetSentence, finalText)
+    const confidence = 85 // Default confidence for accumulated results
+    
+    onResult({
+      transcript: finalText,
+      confidence,
+      accuracy
+    })
+    
+    // Reset accumulated transcript
+    accumulatedTranscriptRef.current = ''
+    isProcessingResultRef.current = false
+  }
 
   const calculateAccuracy = (target: string, spoken: string): number => {
     const targetWords = target.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/)
@@ -354,10 +459,13 @@ const SpeechRecognition = ({
         console.log('🎤 Attempting to start speech recognition...')
         setTranscript('')
 
-        // Reset restart counter and set recording state
+        // Reset all state for new recording session
         restartCountRef.current = 0
         setRestartAttempts(0)
         isRecordingRef.current = true
+        accumulatedTranscriptRef.current = ''
+        lastResultTimeRef.current = Date.now()
+        isProcessingResultRef.current = false
 
         // Call onStartRecording first to update UI
         onStartRecording()
@@ -396,10 +504,22 @@ const SpeechRecognition = ({
   const stopRecording = () => {
     console.log('🛑 Stopping recording...')
 
-    // Clear timeout
+    // Clear all timeouts
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
       timeoutRef.current = null
+    }
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current)
+      silenceTimeoutRef.current = null
+    }
+
+    // Process any accumulated results for mobile before stopping
+    if ((deviceType === 'mobile' || microphoneMode === 'hold') && 
+        accumulatedTranscriptRef.current.trim() && 
+        !isProcessingResultRef.current) {
+      console.log('📱 Processing accumulated results before stop')
+      processAccumulatedResult()
     }
 
     // Reset restart counter and recording state
@@ -544,16 +664,29 @@ const SpeechRecognition = ({
             
             {/* Show recording status even when button is hidden */}
             {hideButton && isRecording && (
-              <p className="text-gray-600 mb-2 text-sm sm:text-base">
-                <span>
-                  Listening... Speak clearly!
-                  {restartAttempts > 0 && (
-                    <span className="block text-xs text-orange-600 mt-1">
-                      🔄 Reconnecting... (attempt {restartAttempts}/{deviceType === 'desktop' ? '1' : '5'})
-                    </span>
-                  )}
-                </span>
-              </p>
+              <div className="text-center mb-2">
+                <p className="text-gray-600 text-sm sm:text-base">
+                  <span>
+                    {deviceType === 'mobile' || microphoneMode === 'hold' 
+                      ? 'Keep holding and speaking...' 
+                      : 'Listening... Speak clearly!'
+                    }
+                    {restartAttempts > 0 && (
+                      <span className="block text-xs text-orange-600 mt-1">
+                        🔄 Reconnecting... (attempt {restartAttempts}/{deviceType === 'desktop' ? '1' : '8'})
+                      </span>
+                    )}
+                  </span>
+                </p>
+                {/* Progress indicator for mobile */}
+                {(deviceType === 'mobile' || microphoneMode === 'hold') && (
+                  <div className="mt-2">
+                    <div className="text-xs text-blue-600">
+                      📱 Collecting speech... Release when done
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Device-specific instructions */}
@@ -561,7 +694,7 @@ const SpeechRecognition = ({
               <p className="text-gray-500 text-xs mb-2">
                 {deviceType === 'desktop' && microphoneMode === 'toggle' 
                   ? '💻 Desktop mode: Click once to start, click again to stop'
-                  : '📱 Mobile mode: Hold button to speak, release to stop'
+                  : '📱 Mobile mode: Hold button while speaking entire sentence, then release'
                 }
               </p>
             )}
