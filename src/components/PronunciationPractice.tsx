@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import type { Lesson, RecognitionResult } from '../types'
-import SpeechRecognition from './SpeechRecognition.tsx'
+import SimpleSpeechRecognition from './SimpleSpeechRecognition.tsx'
 import ProgressBar from './ProgressBar.tsx'
 import ScoreDisplay from './ScoreDisplay.tsx'
 import PhoneticDisplay from './PhoneticDisplay.tsx'
@@ -160,12 +160,19 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                       : 'bg-blue-600 hover:bg-blue-700 text-white hover:shadow-xl'
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
-                  <span className="text-lg">{isRecording ? '⏹️' : '🎤'}</span>
+                  <span className="text-lg">
+                    {isTimerActive ? timerTimeLeft : isRecording ? '⏹️' : '🎤'}
+                  </span>
                   <span className="hidden sm:inline">
-                    {isRecording ? 'Stop Recording' : 'Start Timer Recording'}
+                    {isTimerActive 
+                      ? `Recording ${timerTimeLeft}s` 
+                      : isRecording 
+                        ? 'Stop Recording' 
+                        : 'Start Timer Recording'
+                    }
                   </span>
                   <span className="sm:hidden">
-                    {isRecording ? 'Stop' : 'Record'}
+                    {isTimerActive ? `${timerTimeLeft}s` : isRecording ? 'Stop' : 'Record'}
                   </span>
                 </button>
               </div>
@@ -187,8 +194,8 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
               </div>
             </div>
 
-            {/* Speech Recognition Component */}
-            <SpeechRecognition
+            {/* Simple Speech Recognition Component */}
+            <SimpleSpeechRecognition
               targetSentence={currentSentence}
               isRecording={isRecording}
               onStartRecording={() => setIsRecording(true)}
@@ -196,8 +203,6 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
               onResult={handleRecognitionResult}
               showResult={showResult}
               hideButton={true}
-              deviceType={deviceInfo.isDesktop ? 'desktop' : 'mobile'}
-              microphoneMode="timer"
               onTimerUpdate={handleTimerUpdate}
             />
 

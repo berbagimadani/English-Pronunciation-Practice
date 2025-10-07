@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useArticles } from '../hooks/useArticles'
 import ClickableSentence from './ClickableSentence'
 import PhoneticDisplay from './PhoneticDisplay'
-import SpeechRecognition from './SpeechRecognition'
+import SimpleSpeechRecognition from './SimpleSpeechRecognition'
 import ScoreDisplay from './ScoreDisplay'
 import SpeechControls from './SpeechControls'
 import type { RecognitionResult } from '../types'
@@ -25,7 +25,7 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
   const [isRecording, setIsRecording] = useState(false)
   const [showResult, setShowResult] = useState(false)
   const [lastResult, setLastResult] = useState<RecognitionResult | null>(null)
-  
+
   // Timer state
   const [timerTimeLeft, setTimerTimeLeft] = useState(0)
   const [isTimerActive, setIsTimerActive] = useState(false)
@@ -189,18 +189,24 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
                 }
               }}
               disabled={showResult}
-              className={`inline-flex items-center space-x-2 px-4 sm:px-6 py-3 rounded-lg transition-all duration-200 text-sm sm:text-base select-none font-medium shadow-lg ${
-                isRecording
-                  ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
-                  : 'bg-green-600 hover:bg-green-700 text-white hover:shadow-xl'
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
+              className={`inline-flex items-center space-x-2 px-4 sm:px-6 py-3 rounded-lg transition-all duration-200 text-sm sm:text-base select-none font-medium shadow-lg ${isRecording
+                ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                : 'bg-green-600 hover:bg-green-700 text-white hover:shadow-xl'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              <span className="text-lg">{isRecording ? '⏹️' : '🎤'}</span>
+              <span className="text-lg">
+                {isTimerActive ? timerTimeLeft : isRecording ? '⏹️' : '🎤'}
+              </span>
               <span className="hidden sm:inline">
-                {isRecording ? 'Stop Recording' : 'Start Timer Recording'}
+                {isTimerActive 
+                  ? `Recording ${timerTimeLeft}s` 
+                  : isRecording 
+                    ? 'Stop Recording' 
+                    : 'Start Timer Recording'
+                }
               </span>
               <span className="sm:hidden">
-                {isRecording ? 'Stop' : 'Record'}
+                {isTimerActive ? `${timerTimeLeft}s` : isRecording ? 'Stop' : 'Record'}
               </span>
             </button>
           </div>
@@ -219,8 +225,8 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
           </div>
         </div>
 
-        {/* Speech Recognition Component */}
-        <SpeechRecognition
+        {/* Simple Speech Recognition Component */}
+        <SimpleSpeechRecognition
           targetSentence={currentSentence}
           isRecording={isRecording}
           onStartRecording={() => setIsRecording(true)}
@@ -228,7 +234,10 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
           onResult={handleRecognitionResult}
           showResult={showResult}
           hideButton={true}
-          microphoneMode="timer"
+          onTimerUpdate={(timeLeft, isActive) => {
+            setTimerTimeLeft(timeLeft)
+            setIsTimerActive(isActive)
+          }}
         />
 
         {/* Result Display */}
