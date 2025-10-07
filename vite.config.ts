@@ -29,6 +29,7 @@ export default defineConfig({
     // Allow microphone access in development
     headers: {
       'Permissions-Policy': 'microphone=(self)'
-    }
+    },
+    allowedHosts: ['.ngrok-free.app']
   }
 })

@@ -15,6 +15,7 @@ export interface VoiceOption {
   gender: 'male' | 'female' | 'unknown'
   voiceURI: string
   localService: boolean
+  engine: 'google' | 'samsung' | 'other'
 }
 
 // Storage key for persisting settings
@@ -69,27 +70,35 @@ export const useSpeechSynthesis = () => {
     })
     
     const voiceOptions: VoiceOption[] = availableVoices
-      .filter(voice => voice.lang?.toLowerCase().startsWith('en')) // English voices only
+      .filter(voice => voice.lang?.toLowerCase().startsWith('en'))
       .map(voice => {
         const gender = detectGender(voice.name, voice.voiceURI)
-        console.log(`🎭 Voice "${voice.name}" (${voice.voiceURI}) detected as: ${gender}`)
+        const nameL = (voice.name || '').toLowerCase()
+        const uriL = (voice.voiceURI || '').toLowerCase()
+        const engine: 'google' | 'samsung' | 'other' = nameL.includes('google') || uriL.includes('google')
+          ? 'google'
+          : (nameL.includes('samsung') || nameL.includes('bixby') || uriL.includes('samsung'))
+            ? 'samsung'
+            : 'other'
+        console.log(`🎭 Voice "${voice.name}" (${voice.voiceURI}) detected as: ${gender}, engine: ${engine}`)
         return {
           name: voice.name,
           lang: voice.lang,
           gender,
           voiceURI: voice.voiceURI,
-          localService: voice.localService
+          localService: voice.localService,
+          engine,
         }
       })
       .sort((a, b) => {
-        // Prioritize local voices and male voices
-        if (a.localService !== b.localService) {
-          return a.localService ? -1 : 1
-        }
-        if (a.gender !== b.gender) {
-          return a.gender === 'male' ? -1 : 1
-        }
-        return a.name.localeCompare(b.name)
+        // Prefer Google engine on Android, then local services, then en-US vs others, then gender
+        const score = (v: VoiceOption) => (
+          (v.engine === 'google' ? 100 : v.engine === 'samsung' ? 50 : 0) +
+          (v.localService ? 20 : 0) +
+          (v.lang.toLowerCase().startsWith('en-us') ? 10 : 0) +
+          (v.gender === 'male' ? 2 : v.gender === 'female' ? 1 : 0)
+        )
+        return score(b) - score(a)
       })
 
     console.log('🎯 Processed voice options:', voiceOptions.map(v => `${v.name} (${v.gender})`))
@@ -230,35 +239,55 @@ export const useSpeechSynthesis = () => {
     // Stop any current speech
     speechSynthesis.cancel()
 
-    const utterance = new SpeechSynthesisUtterance(text)
+    const normalizeForTTS = (t: string) => {
+      return (t || '')
+        .replace(/[’‘]/g, "'")
+        .replace(/[“”]/g, '"')
+        .replace(/[‐‑–—]/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+
+    const utterance = new SpeechSynthesisUtterance(normalizeForTTS(text))
     
     // Apply settings
     utterance.rate = settings.rate
     utterance.pitch = settings.pitch
     utterance.volume = settings.volume
     
-    // Set voice if available with enhanced error handling
+    // Set voice/lang if available with enhanced error handling
     if (settings.voiceURI) {
       const allVoices = speechSynthesis.getVoices()
       const selectedVoice = allVoices.find(voice => voice.voiceURI === settings.voiceURI)
       
       if (selectedVoice) {
         utterance.voice = selectedVoice
+        if (selectedVoice.lang) utterance.lang = selectedVoice.lang
         console.log('🔊 Speaking with voice:', selectedVoice.name, `(${detectGender(selectedVoice.name)})`)
       } else {
         console.warn('⚠️ Selected voice not found, using default. URI:', settings.voiceURI)
         // Try to find a voice that matches the preferred gender
-        const fallbackVoice = voices.find(v => v.gender === settings.preferredGender)
+        const fallbackVoice = voices.find(v => v.engine === 'google') || voices.find(v => v.gender === settings.preferredGender)
         if (fallbackVoice) {
           const actualFallback = allVoices.find(v => v.voiceURI === fallbackVoice.voiceURI)
           if (actualFallback) {
             utterance.voice = actualFallback
+            if (actualFallback.lang) utterance.lang = actualFallback.lang
             console.log('🔄 Using fallback voice:', actualFallback.name)
           }
         }
       }
     } else {
-      console.log('🔊 Speaking with default voice (no voice selected)')
+      // Try pick best default (Google en-US) if none selected
+      const allVoices = speechSynthesis.getVoices()
+      const preferGoogle = allVoices.find(v => (v.name || '').toLowerCase().includes('google') && (v.lang || '').toLowerCase().startsWith('en-us'))
+      if (preferGoogle) {
+        utterance.voice = preferGoogle
+        if (preferGoogle.lang) utterance.lang = preferGoogle.lang
+        console.log('🔊 Defaulting to Google en-US voice')
+      } else {
+        console.log('🔊 Speaking with default voice (no voice selected)')
+      }
     }
 
     // Event handlers with enhanced logging
