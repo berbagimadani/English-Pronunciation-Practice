@@ -1,10 +1,22 @@
 [build]
   publish = "dist"
-  command = "npm run build"
+  command = "npm run build:prod"
 
 [build.environment]
   NODE_VERSION = "18"
   NPM_VERSION = "9"
+
+# Disable automatic compression to prevent conflicts
+[build.processing]
+  skip_processing = false
+[build.processing.css]
+  bundle = true
+  minify = true
+[build.processing.js]
+  bundle = true
+  minify = true
+[build.processing.html]
+  pretty_urls = true
 
 # Redirect all routes to index.html for SPA
 [[redirects]]
@@ -22,6 +34,8 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "microphone=(self), camera=(), geolocation=(), payment=()"
     Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.nytimes.com; media-src 'self'"
+    # Ensure proper content type detection
+    Vary = "Accept-Encoding"
 
 # Cache static assets
 [[headers]]
@@ -35,8 +49,4 @@
   [headers.values]
     Cache-Control = "public, max-age=3600"
 
-# Enable gzip compression
-[[headers]]
-  for = "/*"
-  [headers.values]
-    Content-Encoding = "gzip"
+# Netlify handles compression automatically, no need to set Content-Encoding
