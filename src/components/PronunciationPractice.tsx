@@ -27,14 +27,17 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
     const userAgent = navigator.userAgent.toLowerCase()
     const isAndroid = userAgent.includes('android')
     const isChrome = userAgent.includes('chrome') && !userAgent.includes('edge') && !userAgent.includes('samsung')
-    const isMobile = navigator.userAgentData?.mobile || /mobile|android|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent)
+    
+    // Safe check for userAgentData
+    const userAgentData = (navigator as any).userAgentData
+    const isMobile = userAgentData?.mobile || /mobile|android|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent)
     
     console.log('🔍 Device detection:', {
       userAgent: navigator.userAgent,
       isAndroid,
       isChrome,
       isMobile,
-      userAgentData: navigator.userAgentData
+      userAgentData
     })
     
     return {
@@ -51,14 +54,9 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
       return holdToSpeak ? 'hold' : 'toggle'
     }
     
-    // Auto-detect based on device
-    if (deviceInfo.isAndroidChrome) {
-      console.log('📱 Auto-detected Android Chrome: using hold-to-speak')
-      return 'hold'
-    } else {
-      console.log('💻 Auto-detected desktop/laptop: using tap-to-toggle')
-      return 'toggle'
-    }
+    // CHANGED: Default to toggle for ALL devices (more stable)
+    console.log('🔄 Auto-detected: using tap-to-toggle for all devices (more stable)')
+    return 'toggle'
   }, [holdToSpeak, deviceInfo])
 
   const isHoldMode = microphoneBehavior === 'hold'
@@ -147,46 +145,16 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                 />
 
                 <button
-                  {...(isHoldMode ? {
-                    // Hold-to-speak mode (Android Chrome)
-                    onPointerDown: (e) => {
-                      e.preventDefault()
-                      console.log('🎤 Hold mode: Pointer down - starting recording')
+                  onClick={() => {
+                    console.log('🎤 Microphone button clicked - current state:', isRecording)
+                    if (isRecording) {
+                      console.log('🛑 Stopping recording...')
+                      setIsRecording(false)
+                    } else {
+                      console.log('🎤 Starting recording...')
                       setIsRecording(true)
-                    },
-                    onPointerUp: (e) => {
-                      e.preventDefault()
-                      console.log('🛑 Hold mode: Pointer up - stopping recording')
-                      setIsRecording(false)
-                    },
-                    onPointerLeave: (e) => {
-                      e.preventDefault()
-                      console.log('🛑 Hold mode: Pointer leave - stopping recording')
-                      setIsRecording(false)
-                    },
-                    onTouchStart: (e) => {
-                      e.preventDefault()
-                      console.log('🎤 Hold mode: Touch start - starting recording')
-                      setIsRecording(true)
-                    },
-                    onTouchEnd: (e) => {
-                      e.preventDefault()
-                      console.log('🛑 Hold mode: Touch end - stopping recording')
-                      setIsRecording(false)
                     }
-                  } : {
-                    // Tap-to-toggle mode (Desktop)
-                    onClick: () => {
-                      console.log('🎤 Toggle mode: Click - current state:', isRecording)
-                      if (isRecording) {
-                        console.log('🛑 Toggle mode: Stopping recording...')
-                        setIsRecording(false)
-                      } else {
-                        console.log('🎤 Toggle mode: Starting recording...')
-                        setIsRecording(true)
-                      }
-                    }
-                  })}
+                  }}
                   disabled={showResult}
                   className={`inline-flex items-center space-x-2 px-3 sm:px-4 py-2 rounded-lg transition-colors text-sm sm:text-base select-none ${isRecording
                     ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
@@ -195,16 +163,10 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                 >
                   <span>{isRecording ? '⏹️' : '🎤'}</span>
                   <span className="hidden sm:inline">
-                    {isHoldMode 
-                      ? (isRecording ? 'Release to Stop' : 'Hold to Speak')
-                      : (isRecording ? 'Stop Recording' : 'Start Recording')
-                    }
+                    {isRecording ? 'Stop Recording' : 'Start Recording'}
                   </span>
                   <span className="sm:hidden">
-                    {isHoldMode 
-                      ? (isRecording ? 'Release' : 'Hold')
-                      : (isRecording ? 'Stop' : 'Record')
-                    }
+                    {isRecording ? 'Stop' : 'Record'}
                   </span>
                 </button>
               </div>
@@ -218,11 +180,14 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                   onClick={() => setHoldToSpeak(!isHoldMode)}
                   className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs transition-colors"
                 >
-                  {isHoldMode ? '📱 Hold to Speak' : '💻 Tap to Toggle'}
+                  {isHoldMode ? '📱 Hold to Speak' : '🔄 Tap to Toggle'}
                 </button>
                 <span className="text-gray-400">
-                  ({deviceInfo.isAndroidChrome ? 'Android' : deviceInfo.isDesktop ? 'Desktop' : 'Mobile'} detected)
+                  ({deviceInfo.isAndroidChrome ? 'Android' : deviceInfo.isDesktop ? 'Desktop' : 'Mobile'} • Default: Toggle)
                 </span>
+              </div>
+              <div className="mt-1 text-xs text-gray-500">
+                💡 Toggle mode is more stable on all devices
               </div>
             </div>
 

@@ -127,17 +127,17 @@ const SpeechRecognition = ({
 
       const recognition = recognitionRef.current
       
-      // Configure based on device type and microphone mode
-      if (deviceType === 'desktop' && microphoneMode === 'toggle') {
-        // Desktop tap-to-toggle: use non-continuous mode to prevent auto-restart
-        recognition.continuous = false
-        recognition.interimResults = true
-        console.log('🖥️ Desktop tap-to-toggle mode: continuous=false')
-      } else {
-        // Mobile or hold-to-speak: use continuous mode for stability
+      // Configure based on microphone mode (optimized for toggle on all devices)
+      if (microphoneMode === 'toggle') {
+        // Toggle mode: use continuous with smart accumulation for all devices
         recognition.continuous = true
         recognition.interimResults = true
-        console.log('📱 Mobile/hold mode: continuous=true')
+        console.log('🔄 Toggle mode: continuous=true with smart accumulation')
+      } else {
+        // Hold mode: use continuous mode for stability
+        recognition.continuous = true
+        recognition.interimResults = true
+        console.log('📱 Hold mode: continuous=true')
       }
       
       recognition.lang = 'en-US'
@@ -180,8 +180,8 @@ const SpeechRecognition = ({
           }
         }
 
-        // For mobile/hold mode: accumulate results instead of immediate processing
-        if (deviceType === 'mobile' || microphoneMode === 'hold') {
+        // For all devices in toggle mode or mobile hold mode: accumulate results
+        if (microphoneMode === 'toggle' || microphoneMode === 'hold') {
           if (finalTranscript) {
             // Add to accumulated transcript with space separator
             const newText = finalTranscript.trim()
@@ -203,9 +203,10 @@ const SpeechRecognition = ({
             clearTimeout(silenceTimeoutRef.current)
           }
           
-          // Calculate adaptive timeout based on target sentence length
+          // Calculate adaptive timeout based on target sentence length and mode
           const targetWords = targetSentence.split(' ').length
-          const adaptiveTimeout = Math.max(2000, Math.min(targetWords * 500, 8000)) // 2-8 seconds
+          const baseTimeout = microphoneMode === 'toggle' ? 3000 : 2000 // Longer for toggle mode
+          const adaptiveTimeout = Math.max(baseTimeout, Math.min(targetWords * 600, 10000)) // 3-10 seconds for toggle
           
           silenceTimeoutRef.current = setTimeout(() => {
             console.log('🔇 Silence detected, processing accumulated result')
@@ -258,14 +259,66 @@ const SpeechRecognition = ({
           timeoutRef.current = null
         }
 
-        // Handle restart logic based on device type and mode
-        if (deviceType === 'desktop' && microphoneMode === 'toggle') {
-          // Desktop tap-to-toggle: don't auto-restart, let user control
-          console.log('🖥️ Desktop mode: Recognition ended, not auto-restarting')
-          restartCountRef.current = 0
-          setRestartAttempts(0)
-          isRecordingRef.current = false
-          onStopRecording()
+        // Handle restart logic based on microphone mode
+        if (microphoneMode === 'toggle') {
+          // Toggle mode: smart restart with accumulation
+          const timeSinceLastResult = Date.now() - lastResultTimeRef.current
+          const hasAccumulatedText = accumulatedTranscriptRef.current.trim().length > 0
+          
+          if (!isRecordingRef.current) {
+            // User stopped recording, process accumulated results
+            console.log('🔄 Toggle mode: User stopped, processing accumulated results')
+            if (hasAccumulatedText) {
+              processAccumulatedResult()
+            }
+            restartCountRef.current = 0
+            setRestartAttempts(0)
+            onStopRecording()
+          } else if (hasAccumulatedText && timeSinceLastResult > 4000) {
+            // Has text and been silent for 4+ seconds in toggle mode, probably done
+            console.log('🔄 Toggle mode: Long silence with text, processing results')
+            processAccumulatedResult()
+            restartCountRef.current = 0
+            setRestartAttempts(0)
+            isRecordingRef.current = false
+            onStopRecording()
+          } else if (isRecordingRef.current && restartCountRef.current < 6) {
+            // Still recording and haven't hit max restarts, continue
+            console.log(`🔄 Toggle mode: Attempting to restart recognition (attempt ${restartCountRef.current + 1}/6)`)
+            restartCountRef.current++
+            setRestartAttempts(restartCountRef.current)
+
+            // Shorter delay for better responsiveness in toggle mode
+            const delay = Math.min(300 + (restartCountRef.current * 100), 1000)
+            setTimeout(() => {
+              if (recognitionRef.current && isRecordingRef.current) {
+                try {
+                  console.log(`🔄 Restarting speech recognition... (delay: ${delay}ms)`)
+                  recognitionRef.current.start()
+                } catch (error) {
+                  console.error('❌ Failed to restart recognition:', error)
+                  if (restartCountRef.current >= 6) {
+                    console.log('🔄 Toggle mode: Max restarts reached, processing any accumulated text')
+                    if (hasAccumulatedText) {
+                      processAccumulatedResult()
+                    }
+                    isRecordingRef.current = false
+                    setRestartAttempts(0)
+                    onStopRecording()
+                  }
+                }
+              }
+            }, delay)
+          } else {
+            console.log('🔄 Toggle mode: Stopping recording (max restarts or manual stop)')
+            if (hasAccumulatedText) {
+              processAccumulatedResult()
+            }
+            restartCountRef.current = 0
+            setRestartAttempts(0)
+            isRecordingRef.current = false
+            onStopRecording()
+          }
         } else {
           // Mobile or hold-to-speak: check if we should restart or process results
           const timeSinceLastResult = Date.now() - lastResultTimeRef.current
@@ -477,10 +530,10 @@ const SpeechRecognition = ({
         recognitionRef.current.start()
         console.log('✅ Speech recognition start() called successfully')
 
-        // Set timeout based on device type and mode
-        const timeoutDuration = deviceType === 'desktop' && microphoneMode === 'toggle' 
-          ? 30000 // 30 seconds for desktop tap-to-toggle
-          : 60000 // 60 seconds for mobile/hold mode
+        // Set timeout based on microphone mode
+        const timeoutDuration = microphoneMode === 'toggle' 
+          ? 45000 // 45 seconds for toggle mode (longer for user control)
+          : 60000 // 60 seconds for hold mode
           
         timeoutRef.current = setTimeout(() => {
           console.log(`⏰ Recording timeout after ${timeoutDuration/1000} seconds`)
@@ -667,34 +720,35 @@ const SpeechRecognition = ({
               <div className="text-center mb-2">
                 <p className="text-gray-600 text-sm sm:text-base">
                   <span>
-                    {deviceType === 'mobile' || microphoneMode === 'hold' 
+                    {microphoneMode === 'hold' 
                       ? 'Keep holding and speaking...' 
-                      : 'Listening... Speak clearly!'
+                      : 'Recording... Speak your sentence!'
                     }
                     {restartAttempts > 0 && (
                       <span className="block text-xs text-orange-600 mt-1">
-                        🔄 Reconnecting... (attempt {restartAttempts}/{deviceType === 'desktop' ? '1' : '8'})
+                        🔄 Reconnecting... (attempt {restartAttempts}/{microphoneMode === 'toggle' ? '6' : '8'})
                       </span>
                     )}
                   </span>
                 </p>
-                {/* Progress indicator for mobile */}
-                {(deviceType === 'mobile' || microphoneMode === 'hold') && (
-                  <div className="mt-2">
-                    <div className="text-xs text-blue-600">
-                      📱 Collecting speech... Release when done
-                    </div>
+                {/* Progress indicator */}
+                <div className="mt-2">
+                  <div className="text-xs text-blue-600">
+                    {microphoneMode === 'toggle' 
+                      ? '🔄 Collecting speech... Click Stop when finished'
+                      : '📱 Collecting speech... Release when done'
+                    }
                   </div>
-                )}
+                </div>
               </div>
             )}
 
             {/* Device-specific instructions */}
             {hideButton && !isRecording && (
               <p className="text-gray-500 text-xs mb-2">
-                {deviceType === 'desktop' && microphoneMode === 'toggle' 
-                  ? '💻 Desktop mode: Click once to start, click again to stop'
-                  : '📱 Mobile mode: Hold button while speaking entire sentence, then release'
+                {microphoneMode === 'toggle' 
+                  ? '🔄 Toggle mode: Click to start recording, click again to stop and evaluate'
+                  : '📱 Hold mode: Hold button while speaking entire sentence, then release'
                 }
               </p>
             )}
