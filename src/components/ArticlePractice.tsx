@@ -198,10 +198,10 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
                 {isTimerActive ? timerTimeLeft : isRecording ? '⏹️' : '🎤'}
               </span>
               <span className="hidden sm:inline">
-                {isTimerActive 
-                  ? `Recording ${timerTimeLeft}s` 
-                  : isRecording 
-                    ? 'Stop Recording' 
+                {isTimerActive
+                  ? `Recording ${timerTimeLeft}s`
+                  : isRecording
+                    ? 'Stop Recording'
                     : 'Start Timer Recording'
                 }
               </span>

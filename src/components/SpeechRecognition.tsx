@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { computeAccuracy } from '../utils/textMatch'
 import type { RecognitionResult } from '../types'
 import useSpeechRecognition from '../hooks/useSpeechRecognition'
 
@@ -48,6 +49,29 @@ const SpeechRecognition = ({
   const androidRestartTimeoutRef = useRef<number | null>(null)
   const quickRestartCountRef = useRef(0)
   const lastSuccessTimeRef = useRef<number>(0)
+  const finalizeTimeoutRef = useRef<number | null>(null)
+
+  // Simple localStorage backup to persist transcript between auto restarts
+  const LS_KEY = 'sr_session_transcript'
+  const saveBackup = (text: string) => {
+    try {
+      if (!text || !text.trim()) return
+      localStorage.setItem(LS_KEY, JSON.stringify({ text, ts: Date.now() }))
+    } catch {}
+  }
+  const loadBackup = (): string => {
+    try {
+      const raw = localStorage.getItem(LS_KEY)
+      if (!raw) return ''
+      const data = JSON.parse(raw)
+      return typeof data?.text === 'string' ? data.text : ''
+    } catch {
+      return ''
+    }
+  }
+  const clearBackup = () => {
+    try { localStorage.removeItem(LS_KEY) } catch {}
+  }
   
   // Timer mode state
   const [recordingTimeLeft, setRecordingTimeLeft] = useState(0)
@@ -73,13 +97,15 @@ const SpeechRecognition = ({
     // - Add 3 seconds buffer for thinking/starting
     // - Minimum 8 seconds, maximum 25 seconds
     
-    const baseTime = Math.max(
+    let baseTime = Math.max(
       8, // Minimum 8 seconds
       Math.min(
         25, // Maximum 25 seconds
         (words * 1.5) + 3 // 1.5s per word + 3s buffer
       )
     )
+    // Add small global buffer for more consistent finalization on long sentences
+    baseTime += 2
     
     console.log('⏱️ Adaptive timer calculated:', {
       sentence: targetSentence,
@@ -102,11 +128,9 @@ const SpeechRecognition = ({
         console.log('Recognition already stopped')
       }
     }
-    // Reset all counters and state
+    // Reset counters only; do not clear transcript or accumulated text
     restartCountRef.current = 0
     setRestartAttempts(0)
-    isRecordingRef.current = false
-    setTranscript('')
     
     // Wait a moment then restart - but bypass the isRecording check
     setTimeout(async () => {
@@ -130,7 +154,7 @@ const SpeechRecognition = ({
       if (recognitionRef.current) {
         try {
           console.log('🎤 Force restart - attempting to start speech recognition...')
-          setTranscript('')
+          // Keep current transcript; we want to preserve interim across restarts
           restartCountRef.current = 0
           setRestartAttempts(0)
           isRecordingRef.current = true
@@ -174,9 +198,9 @@ const SpeechRecognition = ({
     // Check if speech recognition is supported
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 
-    if (SpeechRecognition) {
-      setIsSupported(true)
-      recognitionRef.current = new SpeechRecognition()
+      if (SpeechRecognition) {
+        setIsSupported(true)
+        recognitionRef.current = new SpeechRecognition()
 
       const recognition = recognitionRef.current
       
@@ -212,6 +236,29 @@ const SpeechRecognition = ({
         recognition.lang = 'en-US'
         
         console.log('🖥️ Desktop mode: Standard configuration')
+      }
+
+      // Bias recognizer toward target sentence words using JSGF (if supported)
+      try {
+        const anyWin: any = window as any
+        const GrammarList = anyWin.SpeechGrammarList || anyWin.webkitSpeechGrammarList
+        if (GrammarList && recognitionRef.current) {
+          const words = targetSentence
+            .replace(/[^\w\s'’-]/g, ' ')
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 30) // keep grammar compact
+          const unique = Array.from(new Set(words.map(w => w.toLowerCase())))
+          if (unique.length) {
+            const grammar = `#JSGF V1.0; grammar phrase; public <phrase> = ${unique.join(' | ')} ;`
+            const list = new GrammarList()
+            list.addFromString(grammar, 1)
+            ;(recognitionRef.current as any).grammars = list
+            console.log('🧠 Grammar attached to recognizer:', grammar)
+          }
+        }
+      } catch (e) {
+        console.log('Grammar attach skipped:', e)
       }
 
       console.log('🔧 Speech Recognition configured:', {
@@ -269,9 +316,12 @@ const SpeechRecognition = ({
           }
           
           // Show current accumulated + interim text
-          const displayText = accumulatedTranscriptRef.current + 
-            (interimTranscript ? ` ${interimTranscript}` : '')
-          setTranscript(displayText)
+          const displayText = (accumulatedTranscriptRef.current + (interimTranscript ? ` ${interimTranscript}` : '')).trim()
+          if (displayText) {
+            setTranscript(displayText)
+            // Backup on every update so we don't lose on restart
+            saveBackup(displayText)
+          }
 
           // Set up silence detection for mobile
           if (silenceTimeoutRef.current) {
@@ -300,7 +350,9 @@ const SpeechRecognition = ({
           
         } else {
           // Desktop mode: immediate processing
-          setTranscript(finalTranscript || interimTranscript)
+          const displayText = (finalTranscript || interimTranscript).trim()
+          setTranscript(displayText)
+          if (displayText) saveBackup(displayText)
           
           if (finalTranscript) {
             const accuracy = calculateAccuracy(targetSentence, finalTranscript)
@@ -341,7 +393,7 @@ const SpeechRecognition = ({
           onStopRecording()
         } else if (event.error === 'network') {
           console.error('❌ Network error - speech recognition service unavailable')
-          if (androidMode && isRecordingRef.current) {
+          if ((androidMode || microphoneMode === 'timer') && isRecordingRef.current) {
             // Android: Try to recover from network errors
             console.log('🤖 Android: Network error, attempting recovery')
             return // Don't stop, let onend handle restart
@@ -369,16 +421,29 @@ const SpeechRecognition = ({
           timeoutRef.current = null
         }
 
-        // Timer mode: Simple handling, no restarts needed
-        if (microphoneMode === 'timer' && isRecordingRef.current) {
-          console.log('⏱️ Timer mode: Recognition ended, processing results')
-          const hasAccumulatedText = accumulatedTranscriptRef.current.trim().length > 0
-          
-          if (hasAccumulatedText) {
-            processAccumulatedResult()
-          }
-          
-          // Don't restart in timer mode - let the timer control everything
+        // Commit any interim text to accumulation before restart/finalize
+        const liveText = (transcript || '').trim()
+        if (liveText) {
+          // Prefer the live display text which already includes accumulated+interim
+          accumulatedTranscriptRef.current = liveText
+          console.log('📝 Committed live transcript to accumulation:', accumulatedTranscriptRef.current)
+          saveBackup(accumulatedTranscriptRef.current)
+        }
+
+        // Timer mode: keep recognition alive until countdown finishes
+        if (microphoneMode === 'timer' && isRecordingRef.current && isTimerActive) {
+          console.log('⏱️ Timer mode: Recognition ended early, auto-restarting to keep session alive')
+          const delay = 150
+          setTimeout(() => {
+            if (recognitionRef.current && isRecordingRef.current && isTimerActive) {
+              try {
+                recognitionRef.current.start()
+                console.log('⏱️ Timer mode: Recognition restarted')
+              } catch (e) {
+                console.warn('⏱️ Timer mode: Failed to restart recognition:', e)
+              }
+            }
+          }, delay)
           return
         }
         
@@ -653,11 +718,13 @@ const SpeechRecognition = ({
     }
   }, [targetSentence, onResult, onStopRecording])
 
-  // Process accumulated transcript for mobile/hold mode
+  // Process accumulated transcript for mobile/hold/timer modes
   const processAccumulatedResult = () => {
     if (isProcessingResultRef.current) return // Prevent double processing
-    
-    const finalText = accumulatedTranscriptRef.current.trim()
+    // Prefer the live display text (includes accumulated + interim)
+    const displayText = (transcript || '').trim()
+    const accText = accumulatedTranscriptRef.current.trim()
+    const finalText = (displayText || accText)
     if (!finalText) return
     
     console.log('🎯 Processing final accumulated result:', finalText)
@@ -678,26 +745,14 @@ const SpeechRecognition = ({
       accuracy
     })
     
-    // Reset accumulated transcript
+    // Reset accumulated transcript (keep transcript state for UI if needed)
     accumulatedTranscriptRef.current = ''
     isProcessingResultRef.current = false
+    // Clear backup after finalizing result
+    clearBackup()
   }
 
-  const calculateAccuracy = (target: string, spoken: string): number => {
-    const targetWords = target.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/)
-    const spokenWords = spoken.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/)
-
-    let matches = 0
-    const maxLength = Math.max(targetWords.length, spokenWords.length)
-
-    for (let i = 0; i < Math.min(targetWords.length, spokenWords.length); i++) {
-      if (targetWords[i] === spokenWords[i]) {
-        matches++
-      }
-    }
-
-    return Math.round((matches / maxLength) * 100)
-  }
+  const calculateAccuracy = (target: string, spoken: string): number => computeAccuracy(target, spoken)
 
   // Simplified timer functions - timer controls everything
   const startTimer = () => {
@@ -740,6 +795,10 @@ const SpeechRecognition = ({
       clearTimeout(adaptiveTimerRef.current)
       adaptiveTimerRef.current = null
     }
+    if (finalizeTimeoutRef.current) {
+      clearTimeout(finalizeTimeoutRef.current)
+      finalizeTimeoutRef.current = null
+    }
     setIsTimerActive(false)
     setRecordingTimeLeft(0)
     
@@ -753,11 +812,19 @@ const SpeechRecognition = ({
     // Stop timer first
     stopTimer()
     
-    // Process any accumulated results
-    if (accumulatedTranscriptRef.current.trim()) {
-      console.log('⏱️ Processing accumulated transcript:', accumulatedTranscriptRef.current)
-      processAccumulatedResult()
-    }
+    // Give engine a brief moment to flush final interim → final
+    if (finalizeTimeoutRef.current) clearTimeout(finalizeTimeoutRef.current)
+    finalizeTimeoutRef.current = window.setTimeout(() => {
+      const snapshot = (transcript || '').trim()
+      if (snapshot) {
+        accumulatedTranscriptRef.current = snapshot
+      }
+      if (accumulatedTranscriptRef.current.trim()) {
+        console.log('⏱️ Processing (finalized) transcript:', accumulatedTranscriptRef.current)
+        processAccumulatedResult()
+      }
+      finalizeTimeoutRef.current = null
+    }, 450)
     
     // Stop recognition and update all states
     isRecordingRef.current = false
@@ -807,41 +874,25 @@ const SpeechRecognition = ({
       }
     }
 
-    // Ubuntu-specific: Test microphone access before starting speech recognition
-    try {
-      console.log('🔍 Testing microphone access (Ubuntu compatibility check)...')
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-
-      // Test if we can actually get audio data
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
-      const source = audioContext.createMediaStreamSource(stream)
-      const analyser = audioContext.createAnalyser()
-      source.connect(analyser)
-
-      // Quick test to see if we're getting audio data
-      const dataArray = new Uint8Array(analyser.frequencyBinCount)
-      analyser.getByteFrequencyData(dataArray)
-
-      // Clean up test resources
-      stream.getTracks().forEach(track => track.stop())
-      audioContext.close()
-
-      console.log('✅ Microphone test passed - audio stream is working')
-    } catch (micError) {
-      console.warn('⚠️ Microphone test failed, but continuing anyway:', micError)
-      // Don't return - still try speech recognition as it might work
-    }
+    // Remove extra pre-tests to reduce start latency; permission check above is sufficient
 
     if (recognitionRef.current) {
       try {
         console.log('🎤 Attempting to start speech recognition...')
-        setTranscript('')
+        // Try to resume from backup if we had a prior partial
+        if (!accumulatedTranscriptRef.current && !(transcript && transcript.trim())) {
+          const backup = loadBackup()
+          if (backup) {
+            accumulatedTranscriptRef.current = backup
+            setTranscript(backup)
+            console.log('💾 Restored transcript from backup')
+          }
+        }
 
-        // Reset all state for new recording session
+        // Reset all state for new recording session (but keep any restored text)
         restartCountRef.current = 0
         setRestartAttempts(0)
         isRecordingRef.current = true
-        accumulatedTranscriptRef.current = ''
         lastResultTimeRef.current = Date.now()
         isProcessingResultRef.current = false
         
@@ -856,26 +907,18 @@ const SpeechRecognition = ({
 
         // Timer mode: Start timer first, then recognition
         if (microphoneMode === 'timer') {
-          console.log('⏱️ Timer mode: Starting countdown and recognition together')
-          
-          // Update parent state first to show loading button
+          console.log('⏱️ Timer mode: Start recognition immediately, then timer')
           onStartRecording()
-          
-          // Start countdown timer - this will control everything
+          // Start recognition immediately to avoid missing first words
+          recognitionRef.current.start()
+          // Start countdown without artificial delay
           startTimer()
-          
-          // Small delay for stability
-          await new Promise(resolve => setTimeout(resolve, 300))
-          
-          // Start recognition
-          recognitionRef.current.start()
-          console.log('✅ Timer mode: Recognition started with countdown timer')
+          console.log('✅ Timer mode: Recognition + timer started')
         } else {
-          // Other modes: Standard flow
+          // Other modes: Start without artificial delay
           onStartRecording()
-          await new Promise(resolve => setTimeout(resolve, 200))
           recognitionRef.current.start()
-          console.log('✅ Standard mode: Recognition started')
+          console.log('✅ Standard mode: Recognition started immediately')
         }
 
         // Set timeout based on microphone mode
@@ -931,13 +974,21 @@ const SpeechRecognition = ({
       silenceTimeoutRef.current = null
     }
 
-    // Process any accumulated results for mobile before stopping
-    if ((deviceType === 'mobile' || microphoneMode === 'hold') && 
-        accumulatedTranscriptRef.current.trim() && 
-        !isProcessingResultRef.current) {
-      console.log('📱 Processing accumulated results before stop')
-      processAccumulatedResult()
-    }
+    // Give engine a brief moment to flush final interim → final
+    if (finalizeTimeoutRef.current) clearTimeout(finalizeTimeoutRef.current)
+    finalizeTimeoutRef.current = window.setTimeout(() => {
+      const snapshot = (transcript || '').trim()
+      if (snapshot) {
+        accumulatedTranscriptRef.current = snapshot
+      }
+      if ((deviceType === 'mobile' || microphoneMode === 'hold') &&
+          accumulatedTranscriptRef.current.trim() &&
+          !isProcessingResultRef.current) {
+        console.log('📱 Processing accumulated results after short finalization delay')
+        processAccumulatedResult()
+      }
+      finalizeTimeoutRef.current = null
+    }, 450)
 
     // Reset restart counter and recording state
     restartCountRef.current = 0

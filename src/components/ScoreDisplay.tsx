@@ -1,4 +1,5 @@
 import type { RecognitionResult } from '../types'
+import { targetMatchMask } from '../utils/textMatch'
 
 interface ScoreDisplayProps {
   result: RecognitionResult
@@ -21,19 +22,15 @@ const ScoreDisplay = ({ result, targetSentence }: ScoreDisplayProps) => {
   }
 
   const highlightDifferences = (target: string, spoken: string) => {
-    const targetWords = target.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/)
-    const spokenWords = spoken.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/)
-    
-    return targetWords.map((word, index) => {
-      const spokenWord = spokenWords[index]
-      const isMatch = spokenWord === word
-      
+    const mask = targetMatchMask(target, spoken)
+    // For display, split the original target by words for nice chips
+    const words = target.split(/\s+/)
+    return words.map((word, index) => {
+      const isMatch = !!mask[index]
       return (
         <span
           key={index}
-          className={`px-1 py-0.5 rounded ${
-            isMatch ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-          }`}
+          className={`px-1 py-0.5 rounded ${isMatch ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
         >
           {word}
         </span>

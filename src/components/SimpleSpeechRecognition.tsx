@@ -74,15 +74,16 @@ const SimpleSpeechRecognition = ({
     setIsTimerActive(true)
     onTimerUpdate?.(duration, true)
     
-    console.log(`⏱️ Starting simple ${duration}s timer`)
+    console.log(`⏱️ Starting simple ${duration}s timer - continuous recording mode`)
     
     timerIntervalRef.current = setInterval(() => {
       setRecordingTimeLeft(prev => {
         const newTime = prev - 1
+        console.log(`⏱️ Timer tick: ${newTime}s remaining (recording: ${isRecordingRef.current})`)
         onTimerUpdate?.(newTime, newTime > 0)
         
         if (newTime <= 0) {
-          console.log('⏱️ Timer finished - stopping recording')
+          console.log('⏱️ Timer finished - auto stopping recording')
           stopRecording()
           return 0
         }
@@ -133,20 +134,20 @@ const SimpleSpeechRecognition = ({
 
       const recognition = recognitionRef.current
       
-      // SIMPLE configuration - no complex device detection
-      recognition.continuous = false  // Single result for stability
+      // SIMPLE configuration - continuous recording during timer
+      recognition.continuous = true   // Keep recording until timer stops
       recognition.interimResults = true
       recognition.lang = 'en-US'
       
       console.log('🎤 Simple speech recognition initialized')
 
       recognition.onstart = () => {
-        console.log('🎤 Recognition started')
+        console.log('🎤 Recognition started - continuous mode active')
         isRecordingRef.current = true
       }
 
       recognition.onresult = (event: SpeechRecognitionEvent) => {
-        console.log('🎤 Recognition result received')
+        console.log(`🎤 Recognition result received (timer: ${recordingTimeLeft}s, active: ${isTimerActive})`)
 
         let finalTranscript = ''
         let interimTranscript = ''
@@ -167,36 +168,54 @@ const SimpleSpeechRecognition = ({
             accumulatedTranscriptRef.current = accumulatedTranscriptRef.current 
               ? `${accumulatedTranscriptRef.current} ${newText}`.trim()
               : newText
-            console.log('📝 Accumulated:', accumulatedTranscriptRef.current)
+            console.log('📝 Accumulated final text:', accumulatedTranscriptRef.current)
           }
         }
         
-        // Show current text
+        // Show current text (accumulated + interim)
         const displayText = accumulatedTranscriptRef.current + 
           (interimTranscript ? ` ${interimTranscript}` : '')
         setTranscript(displayText)
+        
+        if (interimTranscript) {
+          console.log('💬 Interim text:', interimTranscript)
+        }
       }
 
       recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
         console.error('🚨 Recognition error:', event.error)
         
-        // Simple error handling - just stop
+        // Handle different error types
         if (event.error === 'not-allowed') {
           console.error('❌ Permission denied')
+          stopRecording()
           requestPermission()
+        } else if (event.error === 'no-speech') {
+          console.log('🔇 No speech detected - continuing to listen...')
+          // Don't stop for no-speech, let timer handle it
+        } else if (event.error === 'audio-capture') {
+          console.error('🎤 Audio capture error - stopping')
+          stopRecording()
+        } else if (event.error === 'network') {
+          console.error('🌐 Network error - stopping')
+          stopRecording()
+        } else {
+          console.log(`⚠️ Minor error (${event.error}) - continuing...`)
+          // For other minor errors, don't stop - let timer control
         }
-        
-        // Don't try to restart - just stop cleanly
-        stopRecording()
       }
 
       recognition.onend = () => {
-        console.log('🛑 Recognition ended')
+        console.log('🛑 Recognition ended naturally')
         
-        // Simple handling - process results and stop
-        if (isRecordingRef.current) {
+        // Only stop if timer is not active (manual stop or error)
+        // If timer is still active, this is unexpected end - let timer handle it
+        if (!isTimerActive && isRecordingRef.current) {
+          console.log('🛑 Processing results from natural end')
           processResult()
           stopRecording()
+        } else if (isTimerActive) {
+          console.log('⏱️ Recognition ended but timer still active - timer will handle stop')
         }
       }
     }
@@ -240,23 +259,30 @@ const SimpleSpeechRecognition = ({
 
     if (recognitionRef.current && !isRecordingRef.current) {
       try {
-        // Reset state
+        // Reset all state
         setTranscript('')
         accumulatedTranscriptRef.current = ''
-        isRecordingRef.current = true
         
-        // Start timer and recognition
+        // Update parent state first
         onStartRecording()
+        
+        // Start timer (this will control when to stop)
         startTimer()
         
-        // Small delay for stability
-        await new Promise(resolve => setTimeout(resolve, 200))
+        // Mark as recording
+        isRecordingRef.current = true
         
+        // Small delay for stability
+        await new Promise(resolve => setTimeout(resolve, 300))
+        
+        // Start continuous recognition
         recognitionRef.current.start()
-        console.log('✅ Simple recording started')
+        console.log('✅ Simple continuous recording started - timer will control stop')
       } catch (error) {
         console.error('❌ Failed to start:', error)
-        stopRecording()
+        isRecordingRef.current = false
+        stopTimer()
+        onStopRecording()
       }
     }
   }
@@ -265,22 +291,29 @@ const SimpleSpeechRecognition = ({
   const stopRecording = () => {
     console.log('🛑 Stopping simple recording...')
     
+    // Stop timer first
     stopTimer()
     
+    // Mark as not recording
+    isRecordingRef.current = false
+    
+    // Process accumulated results
     if (accumulatedTranscriptRef.current.trim()) {
+      console.log('📝 Processing final results:', accumulatedTranscriptRef.current)
       processResult()
     }
     
-    isRecordingRef.current = false
-    
+    // Stop recognition
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop()
+        console.log('🛑 Recognition stopped successfully')
       } catch (error) {
-        console.log('Recognition already stopped')
+        console.log('🛑 Recognition already stopped:', error)
       }
     }
     
+    // Update parent state
     onStopRecording()
   }
 
