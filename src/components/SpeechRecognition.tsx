@@ -1,0 +1,603 @@
+import { useState, useEffect, useRef, useMemo } from 'react'
+import type { RecognitionResult } from '../types'
+import useSpeechRecognition from '../hooks/useSpeechRecognition'
+
+interface SpeechRecognitionProps {
+  targetSentence: string
+  isRecording: boolean
+  onStartRecording: () => void
+  onStopRecording: () => void
+  onResult: (result: RecognitionResult) => void
+  showResult: boolean
+  hideButton?: boolean
+}
+
+const SpeechRecognition = ({
+  targetSentence,
+  isRecording,
+  onStartRecording,
+  onStopRecording,
+  onResult,
+  showResult,
+  hideButton = false
+}: SpeechRecognitionProps) => {
+  const [transcript, setTranscript] = useState('')
+  const [isSupported, setIsSupported] = useState(false)
+  const [restartAttempts, setRestartAttempts] = useState(0)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const timeoutRef = useRef<number | null>(null)
+  const restartCountRef = useRef(0)
+  const isRecordingRef = useRef(false)
+  const { isSupported: apiSupported, hasPermission, permissionError, requestPermission } = useSpeechRecognition()
+
+  const isSecure = useMemo(() => {
+    if (typeof window === 'undefined') return false
+    return window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+  }, [])
+
+  // Helper function for force restart (same as Force Restart button)
+  const forceRestartRecording = async () => {
+    console.log('🔄 Force restart requested for external button')
+    // Force stop current recognition
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop()
+      } catch (e) {
+        console.log('Recognition already stopped')
+      }
+    }
+    // Reset all counters and state
+    restartCountRef.current = 0
+    setRestartAttempts(0)
+    isRecordingRef.current = false
+    setTranscript('')
+    
+    // Wait a moment then restart - but bypass the isRecording check
+    setTimeout(async () => {
+      console.log('🎤 Force restart - starting recognition directly...')
+      
+      if (!isSecure || !isSupported) {
+        console.error('❌ Cannot start - not secure or not supported')
+        return
+      }
+
+      // Ensure microphone permission
+      if (hasPermission !== true) {
+        console.log('🔐 Requesting microphone permission...')
+        const granted = await requestPermission()
+        if (!granted) {
+          console.error('❌ Microphone permission not granted')
+          return
+        }
+      }
+
+      if (recognitionRef.current) {
+        try {
+          console.log('🎤 Force restart - attempting to start speech recognition...')
+          setTranscript('')
+          restartCountRef.current = 0
+          setRestartAttempts(0)
+          isRecordingRef.current = true
+          
+          // Start recognition directly
+          recognitionRef.current.start()
+          console.log('✅ Force restart - speech recognition started successfully')
+        } catch (error) {
+          console.error('❌ Force restart - failed to start speech recognition:', error)
+          isRecordingRef.current = false
+          onStopRecording()
+        }
+      }
+    }, 500)
+  }
+
+  // Effect to handle external recording state changes
+  useEffect(() => {
+    console.log('🔄 SpeechRecognition useEffect triggered:', { hideButton, isRecording, isRecordingRefCurrent: isRecordingRef.current })
+    if (hideButton) {
+      if (isRecording && !isRecordingRef.current) {
+        console.log('🎤 External button triggered START recording - using force restart')
+        // Use force restart logic instead of regular startRecording
+        forceRestartRecording()
+      } else if (!isRecording && isRecordingRef.current) {
+        console.log('🛑 External button triggered STOP recording')
+        // Use the existing stopRecording function
+        stopRecording()
+      }
+    }
+  }, [isRecording, hideButton])
+
+  useEffect(() => {
+    // Check if speech recognition is supported
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+
+    if (SpeechRecognition) {
+      setIsSupported(true)
+      recognitionRef.current = new SpeechRecognition()
+
+      const recognition = recognitionRef.current
+      recognition.continuous = true  // ✅ CHANGE: Set to true for Ubuntu
+      recognition.interimResults = true
+      recognition.lang = 'en-US'
+
+      // Ubuntu-specific configurations
+      // @ts-expect-error non-standard in some implementations
+      recognition.maxAlternatives = 1
+      // @ts-expect-error non-standard in some implementations  
+      recognition.serviceURI = undefined // Use default service
+
+      console.log('🔧 Speech Recognition configured (Ubuntu optimized):', {
+        continuous: recognition.continuous,
+        interimResults: recognition.interimResults,
+        lang: recognition.lang,
+        note: 'continuous=true to prevent immediate timeout'
+      })
+
+      recognition.onstart = () => {
+        console.log('🎤 Speech recognition STARTED successfully')
+      }
+
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        console.log('🎤 Speech recognition RESULT received')
+
+        // Reset restart counter since we got a result (recognition is working)
+        restartCountRef.current = 0
+        setRestartAttempts(0)
+
+        let finalTranscript = ''
+        let interimTranscript = ''
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript
+          } else {
+            interimTranscript += transcript
+          }
+        }
+
+        setTranscript(finalTranscript || interimTranscript)
+
+        if (finalTranscript) {
+          const accuracy = calculateAccuracy(targetSentence, finalTranscript)
+          const confidence = event.results[0][0].confidence || 0.8
+
+          onResult({
+            transcript: finalTranscript,
+            confidence: Math.round(confidence * 100),
+            accuracy
+          })
+        }
+      }
+
+      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        console.error('🚨 Speech recognition ERROR:', event.error, event.message)
+
+        // Handle specific errors
+        if (event.error === 'not-allowed') {
+          console.error('❌ Permission denied')
+          requestPermission()
+        } else if (event.error === 'no-speech') {
+          console.log('⚠️ No speech detected - this might be Ubuntu audio issue')
+        } else if (event.error === 'audio-capture') {
+          console.error('❌ Microphone not available - check Ubuntu audio settings')
+        } else if (event.error === 'network') {
+          console.error('❌ Network error - speech recognition service unavailable')
+        } else if (event.error === 'aborted') {
+          console.log('⚠️ Recognition aborted')
+        }
+
+        onStopRecording()
+      }
+
+      recognition.onend = () => {
+        console.log('🛑 Speech recognition ENDED')
+
+        // Clear any existing timeout
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current)
+          timeoutRef.current = null
+        }
+
+        // If we're supposed to be recording and this is an unexpected end, try to restart
+        if (isRecordingRef.current && restartCountRef.current < 10) { // Increased from 3 to 10
+          console.log(`🔄 Attempting to restart recognition (attempt ${restartCountRef.current + 1}/10)`)
+          restartCountRef.current++
+          setRestartAttempts(restartCountRef.current) // Update UI
+
+          // Longer delay before restart for Ubuntu stability
+          const delay = Math.min(500 + (restartCountRef.current * 200), 2000) // Progressive delay: 500ms, 700ms, 900ms... up to 2s
+          setTimeout(() => {
+            if (recognitionRef.current && isRecordingRef.current) {
+              try {
+                console.log(`🔄 Restarting speech recognition... (delay: ${delay}ms)`)
+                recognitionRef.current.start()
+              } catch (error) {
+                console.error('❌ Failed to restart recognition:', error)
+                // Don't stop immediately, let it try again
+                if (restartCountRef.current >= 10) {
+                  isRecordingRef.current = false
+                  setRestartAttempts(0)
+                  onStopRecording()
+                }
+              }
+            }
+          }, delay)
+        } else {
+          // Reset restart counter and stop recording
+          console.log('🛑 Stopping recording (max restarts reached or manual stop)')
+          restartCountRef.current = 0
+          setRestartAttempts(0)
+          isRecordingRef.current = false
+          onStopRecording()
+        }
+      }
+    }
+
+    return () => {
+      // Clear timeout on cleanup
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+
+      // Reset recording state
+      isRecordingRef.current = false
+
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+    }
+  }, [targetSentence, onResult, onStopRecording])
+
+  const calculateAccuracy = (target: string, spoken: string): number => {
+    const targetWords = target.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/)
+    const spokenWords = spoken.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/)
+
+    let matches = 0
+    const maxLength = Math.max(targetWords.length, spokenWords.length)
+
+    for (let i = 0; i < Math.min(targetWords.length, spokenWords.length); i++) {
+      if (targetWords[i] === spokenWords[i]) {
+        matches++
+      }
+    }
+
+    return Math.round((matches / maxLength) * 100)
+  }
+
+  const startRecording = async () => {
+    console.log('🎯 Starting recording process...')
+    console.log('States:', { isSecure, isSupported, isRecording, hasPermission })
+
+    if (!isSecure) {
+      console.error('❌ Not secure context')
+      return
+    }
+    if (!isSupported) {
+      console.error('❌ Speech recognition not supported')
+      return
+    }
+    if (isRecording) {
+      console.log('⚠️ Already recording, skipping')
+      return
+    }
+
+    // Check audio devices first (but don't block on Ubuntu)
+    const hasAudioDevices = await checkAudioDevices()
+    if (!hasAudioDevices) {
+      console.warn('⚠️ No audio devices detected, but trying anyway (Ubuntu workaround)')
+      // Don't return - continue with speech recognition attempt
+    }
+
+    // Ensure microphone permission has been granted (preflight)
+    if (hasPermission !== true) {
+      console.log('🔐 Requesting microphone permission...')
+      const granted = await requestPermission()
+      if (!granted) {
+        console.error('❌ Microphone permission not granted')
+        return
+      }
+    }
+
+    // Ubuntu-specific: Test microphone access before starting speech recognition
+    try {
+      console.log('🔍 Testing microphone access (Ubuntu compatibility check)...')
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+
+      // Test if we can actually get audio data
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const source = audioContext.createMediaStreamSource(stream)
+      const analyser = audioContext.createAnalyser()
+      source.connect(analyser)
+
+      // Quick test to see if we're getting audio data
+      const dataArray = new Uint8Array(analyser.frequencyBinCount)
+      analyser.getByteFrequencyData(dataArray)
+
+      // Clean up test resources
+      stream.getTracks().forEach(track => track.stop())
+      audioContext.close()
+
+      console.log('✅ Microphone test passed - audio stream is working')
+    } catch (micError) {
+      console.warn('⚠️ Microphone test failed, but continuing anyway:', micError)
+      // Don't return - still try speech recognition as it might work
+    }
+
+    if (recognitionRef.current) {
+      try {
+        console.log('🎤 Attempting to start speech recognition...')
+        setTranscript('')
+
+        // Reset restart counter and set recording state
+        restartCountRef.current = 0
+        setRestartAttempts(0)
+        isRecordingRef.current = true
+
+        // Call onStartRecording first to update UI
+        onStartRecording()
+
+        // Ubuntu-specific: Add a small delay before starting
+        await new Promise(resolve => setTimeout(resolve, 200))
+
+        // Then start recognition
+        recognitionRef.current.start()
+        console.log('✅ Speech recognition start() called successfully')
+
+        // Set a longer timeout for Ubuntu (speech recognition can be slower to initialize)
+        timeoutRef.current = setTimeout(() => {
+          console.log('⏰ Recording timeout after 60 seconds')
+          if (recognitionRef.current && isRecordingRef.current) {
+            isRecordingRef.current = false
+            recognitionRef.current.stop()
+          }
+        }, 60000) // Increased to 60 second timeout
+      } catch (error) {
+        console.error('❌ Failed to start speech recognition:', error)
+        onStopRecording() // Reset state on error
+
+        // Try to request permission again
+        await requestPermission()
+      }
+    } else {
+      console.error('❌ No recognition instance available')
+    }
+  }
+
+  const stopRecording = () => {
+    console.log('🛑 Stopping recording...')
+
+    // Clear timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
+
+    // Reset restart counter and recording state
+    restartCountRef.current = 0
+    setRestartAttempts(0)
+    isRecordingRef.current = false
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop()
+      } catch (error) {
+        console.error('❌ Error stopping recognition:', error)
+      }
+    }
+  }
+
+  // Diagnostic function to check audio devices
+  const checkAudioDevices = async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const audioInputs = devices.filter(device => device.kind === 'audioinput')
+      console.log('🎧 Available audio input devices:', audioInputs.length)
+      audioInputs.forEach((device, index) => {
+        console.log(`  ${index + 1}. ${device.label || 'Unknown Device'} (${device.deviceId})`)
+      })
+
+      if (audioInputs.length === 0) {
+        console.error('❌ No audio input devices found!')
+        return false
+      }
+      return true
+    } catch (error) {
+      console.error('❌ Error checking audio devices:', error)
+      return false
+    }
+  }
+
+  if (!isSecure) {
+    return (
+      <div className="text-center p-4 sm:p-6 lg:p-8 bg-yellow-50 rounded-lg border border-yellow-200">
+        <div className="w-12 h-12 sm:w-16 sm:h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
+          <span className="text-yellow-600 text-xl sm:text-2xl">🔒</span>
+        </div>
+        <h3 className="text-base sm:text-lg font-semibold text-yellow-800 mb-2">Secure Context Required</h3>
+        <p className="text-yellow-700 text-sm sm:text-base">
+          Microphone access requires HTTPS or localhost. Please use npm run dev, npm run preview, or deploy over HTTPS.
+        </p>
+      </div>
+    )
+  }
+
+  if (!isSupported || !apiSupported) {
+    return (
+      <div className="text-center p-4 sm:p-6 lg:p-8 bg-yellow-50 rounded-lg border border-yellow-200">
+        <div className="w-12 h-12 sm:w-16 sm:h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
+          <span className="text-yellow-600 text-xl sm:text-2xl">⚠️</span>
+        </div>
+        <h3 className="text-base sm:text-lg font-semibold text-yellow-800 mb-2">
+          Speech Recognition Not Supported
+        </h3>
+        <p className="text-yellow-700 mb-3 sm:mb-4 text-sm sm:text-base">
+          Your browser doesn't support speech recognition. Please try using Chrome, Edge, or Safari.
+        </p>
+        <p className="text-xs sm:text-sm text-yellow-600">You can still practice by reading the sentences aloud!</p>
+      </div>
+    )
+  }
+
+  if (hasPermission === false || permissionError) {
+    return (
+      <div className="text-center p-4 sm:p-6 lg:p-8 bg-yellow-50 rounded-lg border border-yellow-200">
+        <div className="w-12 h-12 sm:w-16 sm:h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
+          <span className="text-yellow-600 text-xl sm:text-2xl">🎙️</span>
+        </div>
+        <h3 className="text-base sm:text-lg font-semibold text-yellow-800 mb-2">Microphone Access Issue</h3>
+        <p className="text-yellow-700 mb-3 sm:mb-4 text-sm sm:text-base">
+          {permissionError || 'Allow microphone access to start practicing.'}
+        </p>
+        {!permissionError?.includes('not supported') && (
+          <button
+            onClick={() => requestPermission()}
+            className="px-4 sm:px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base mb-3 sm:mb-4"
+          >
+            Try Again
+          </button>
+        )}
+        <div className="text-xs sm:text-sm text-gray-600">
+          <p className="mb-2 font-medium">Ubuntu users - try these commands:</p>
+          <div className="text-left space-y-1 max-w-md mx-auto bg-gray-100 p-2 rounded font-mono text-xs">
+            <div>pulseaudio --check -v</div>
+            <div>pulseaudio --start</div>
+            <div>pactl list sources short</div>
+            <div>sudo usermod -a -G audio $USER</div>
+          </div>
+          <p className="mt-2 text-xs">Then restart Chrome and try again</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="text-center">
+      {!showResult && (
+        <>
+          {/* Recording Button - only show if hideButton is false */}
+          {!hideButton && (
+            <div className="mb-4 sm:mb-6">
+              <button
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={showResult}
+                className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl font-bold transition-all duration-200 transform hover:scale-105 active:scale-95 ${isRecording
+                  ? 'bg-red-500 hover:bg-red-600 animate-pulse-slow'
+                  : 'bg-blue-500 hover:bg-blue-600'
+                  }`}
+              >
+                {isRecording ? '⏹️' : '🎤'}
+              </button>
+            </div>
+          )}
+
+          {/* Instructions */}
+          <div className="mb-3 sm:mb-4">
+            {!hideButton && (
+              <p className="text-gray-600 mb-2 text-sm sm:text-base">
+                {isRecording ? (
+                  <span>
+                    Listening... Speak clearly!
+                    {restartAttempts > 0 && (
+                      <span className="block text-xs text-orange-600 mt-1">
+                        🔄 Reconnecting... (attempt {restartAttempts}/10)
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span>
+                    <span className="hidden sm:inline">Click the microphone to start recording</span>
+                    <span className="sm:hidden">Tap microphone to record</span>
+                  </span>
+                )}
+              </p>
+            )}
+            
+            {/* Show recording status even when button is hidden */}
+            {hideButton && isRecording && (
+              <p className="text-gray-600 mb-2 text-sm sm:text-base">
+                <span>
+                  Listening... Speak clearly!
+                  {restartAttempts > 0 && (
+                    <span className="block text-xs text-orange-600 mt-1">
+                      🔄 Reconnecting... (attempt {restartAttempts}/10)
+                    </span>
+                  )}
+                </span>
+              </p>
+            )}
+
+
+            {isRecording && (
+              <div className="flex justify-center">
+                <div className="flex space-x-1">
+                  <div className="w-1.5 sm:w-2 h-6 sm:h-8 bg-blue-500 rounded animate-pulse"></div>
+                  <div className="w-1.5 sm:w-2 h-4 sm:h-6 bg-blue-400 rounded animate-pulse" style={{ animationDelay: '0.1s' }}></div>
+                  <div className="w-1.5 sm:w-2 h-8 sm:h-10 bg-blue-500 rounded animate-pulse" style={{ animationDelay: '0.2s' }}></div>
+                  <div className="w-1.5 sm:w-2 h-3 sm:h-4 bg-blue-400 rounded animate-pulse" style={{ animationDelay: '0.3s' }}></div>
+                  <div className="w-1.5 sm:w-2 h-5 sm:h-7 bg-blue-500 rounded animate-pulse" style={{ animationDelay: '0.4s' }}></div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Live Transcript */}
+          {transcript && (
+            <div className="bg-gray-50 p-3 sm:p-4 rounded-lg mb-3 sm:mb-4">
+              <p className="text-xs sm:text-sm text-gray-500 mb-1">What you said:</p>
+              <p className="text-sm sm:text-base lg:text-lg text-gray-900">"{transcript}"</p>
+            </div>
+          )}
+
+
+          {/* Debug info for Ubuntu users */}
+          <div className="text-xs text-gray-500 mt-2 space-y-1">
+            <p>🔍 Debug: Check browser console (F12) for detailed logs</p>
+            <p>🐧 Ubuntu users: If microphone icon appears then disappears:</p>
+            <div className="ml-4 space-y-1">
+              <p>• Run: <code className="bg-gray-100 px-1 rounded">pulseaudio --check -v</code></p>
+              <p>• If not running: <code className="bg-gray-100 px-1 rounded">pulseaudio --start</code></p>
+              <p>• Check: <code className="bg-gray-100 px-1 rounded">pactl list sources short</code></p>
+              <p>• Open: System Settings → Sound → Input</p>
+              <p>• Test microphone at: <a href="https://webcammictest.com/check-mic.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">webcammictest.com</a></p>
+            </div>
+
+            {/* Manual restart button for Ubuntu users */}
+            {!isRecording && (
+              <div className="mt-3 pt-2 border-t border-gray-200">
+                <button
+                  onClick={() => {
+                    console.log('🔄 Manual restart requested by user')
+                    // Force stop current recognition
+                    if (recognitionRef.current) {
+                      try {
+                        recognitionRef.current.stop()
+                      } catch (e) {
+                        console.log('Recognition already stopped')
+                      }
+                    }
+                    // Reset all counters and state
+                    restartCountRef.current = 0
+                    setRestartAttempts(0)
+                    isRecordingRef.current = false
+                    setTranscript('')
+                    // Wait a moment then restart
+                    setTimeout(() => {
+                      startRecording()
+                    }, 500)
+                  }}
+                  className="px-3 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-colors"
+                >
+                  🔄 Force Restart (Ubuntu Fix)
+                </button>
+              </div>
+            )}
+          </div>
+
+        </>
+      )}
+    </div>
+  )
+}
+
+export default SpeechRecognition
