@@ -61,16 +61,26 @@ export const useSpeechSynthesis = () => {
   // Load available voices
   const loadVoices = useCallback(() => {
     const availableVoices = speechSynthesis.getVoices()
+    console.log('🔊 Loading voices, total available:', availableVoices.length)
+    
+    // Debug: Log all available voices for troubleshooting
+    availableVoices.forEach((voice, index) => {
+      console.log(`Voice ${index}: ${voice.name} (${voice.lang}) - URI: ${voice.voiceURI} - Local: ${voice.localService}`)
+    })
     
     const voiceOptions: VoiceOption[] = availableVoices
       .filter(voice => voice.lang.startsWith('en')) // English voices only
-      .map(voice => ({
-        name: voice.name,
-        lang: voice.lang,
-        gender: detectGender(voice.name),
-        voiceURI: voice.voiceURI,
-        localService: voice.localService
-      }))
+      .map(voice => {
+        const gender = detectGender(voice.name)
+        console.log(`🎭 Voice "${voice.name}" detected as: ${gender}`)
+        return {
+          name: voice.name,
+          lang: voice.lang,
+          gender,
+          voiceURI: voice.voiceURI,
+          localService: voice.localService
+        }
+      })
       .sort((a, b) => {
         // Prioritize local voices and male voices
         if (a.localService !== b.localService) {
@@ -82,16 +92,20 @@ export const useSpeechSynthesis = () => {
         return a.name.localeCompare(b.name)
       })
 
+    console.log('🎯 Processed voice options:', voiceOptions.map(v => `${v.name} (${v.gender})`))
     setVoices(voiceOptions)
     
     // Auto-select voice based on stored settings or default to best male voice
     if (voiceOptions.length > 0) {
       // Check if stored voice is still available
       const storedVoice = voiceOptions.find(v => v.voiceURI === settings.voiceURI)
+      console.log('💾 Stored voice check:', settings.voiceURI, storedVoice ? 'Found' : 'Not found')
       
       if (!settings.voiceURI || !storedVoice) {
         // No stored voice or stored voice not available, select based on preferred gender
         let preferredVoice: VoiceOption
+        
+        console.log('🎭 Selecting voice for preferred gender:', settings.preferredGender)
         
         if (settings.preferredGender === 'male') {
           preferredVoice = voiceOptions.find(v => v.gender === 'male') || voiceOptions[0]
@@ -102,6 +116,8 @@ export const useSpeechSynthesis = () => {
           preferredVoice = voiceOptions.find(v => v.gender === 'male') || voiceOptions[0]
         }
         
+        console.log('✅ Selected voice:', preferredVoice.name, `(${preferredVoice.gender})`)
+        
         const newSettings = {
           ...settings,
           voiceURI: preferredVoice.voiceURI,
@@ -109,37 +125,63 @@ export const useSpeechSynthesis = () => {
         }
         setSettings(newSettings)
         saveSettings(newSettings)
+      } else {
+        console.log('✅ Using stored voice:', storedVoice.name, `(${storedVoice.gender})`)
       }
     }
     
     setIsLoading(false)
   }, [])
 
-  // Detect gender from voice name (heuristic)
+  // Enhanced gender detection for Android and other platforms
   const detectGender = (voiceName: string): 'male' | 'female' | 'unknown' => {
     const name = voiceName.toLowerCase()
     
-    // Common male voice indicators
-    const maleIndicators = [
-      'male', 'man', 'david', 'daniel', 'alex', 'tom', 'thomas', 'james', 
-      'john', 'michael', 'robert', 'william', 'richard', 'charles', 'mark',
-      'paul', 'steven', 'andrew', 'joshua', 'kenneth', 'kevin', 'brian',
-      'george', 'edward', 'ronald', 'timothy', 'jason', 'jeffrey', 'ryan'
+    // Android-specific voice patterns
+    const androidMalePatterns = [
+      'male', 'man', 'masculine', 'boy', 'guy', 'gentleman',
+      // Google voices
+      'google male', 'android male',
+      // Common Android male voice names
+      'david', 'daniel', 'alex', 'tom', 'thomas', 'james', 'john', 'michael',
+      'robert', 'william', 'richard', 'charles', 'mark', 'paul', 'steven',
+      'andrew', 'joshua', 'kenneth', 'kevin', 'brian', 'george', 'edward',
+      'ronald', 'timothy', 'jason', 'jeffrey', 'ryan', 'christopher', 'matthew',
+      // Samsung voices
+      'samsung male', 'bixby male'
     ]
     
-    // Common female voice indicators
-    const femaleIndicators = [
-      'female', 'woman', 'samantha', 'victoria', 'susan', 'karen', 'sarah',
-      'lisa', 'nancy', 'betty', 'helen', 'sandra', 'donna', 'carol', 'ruth',
-      'sharon', 'michelle', 'laura', 'sarah', 'kimberly', 'deborah', 'dorothy',
-      'lisa', 'nancy', 'karen', 'betty', 'helen', 'sandra', 'donna', 'carol'
+    const androidFemalePatterns = [
+      'female', 'woman', 'feminine', 'girl', 'lady', 'miss', 'mrs',
+      // Google voices
+      'google female', 'android female',
+      // Common Android female voice names
+      'samantha', 'victoria', 'susan', 'karen', 'sarah', 'lisa', 'nancy',
+      'betty', 'helen', 'sandra', 'donna', 'carol', 'ruth', 'sharon',
+      'michelle', 'laura', 'kimberly', 'deborah', 'dorothy', 'amy', 'angela',
+      'brenda', 'emma', 'olivia', 'ava', 'isabella', 'sophia', 'charlotte',
+      // Samsung voices
+      'samsung female', 'bixby female'
     ]
 
-    if (maleIndicators.some(indicator => name.includes(indicator))) {
+    // Check for explicit gender indicators first
+    if (androidMalePatterns.some(pattern => name.includes(pattern))) {
       return 'male'
     }
-    if (femaleIndicators.some(indicator => name.includes(indicator))) {
+    if (androidFemalePatterns.some(pattern => name.includes(pattern))) {
       return 'female'
+    }
+    
+    // Additional heuristics for Android voices
+    // Many Android voices don't have clear gender indicators in names
+    // We'll use additional context clues
+    
+    // Check for numbered voices (often gender-specific on Android)
+    if (name.includes('voice 1') || name.includes('voice 3') || name.includes('voice 5')) {
+      return 'male' // Odd numbers often male on Android
+    }
+    if (name.includes('voice 2') || name.includes('voice 4') || name.includes('voice 6')) {
+      return 'female' // Even numbers often female on Android
     }
     
     return 'unknown'
@@ -184,33 +226,60 @@ export const useSpeechSynthesis = () => {
     utterance.pitch = settings.pitch
     utterance.volume = settings.volume
     
-    // Set voice if available
+    // Set voice if available with enhanced error handling
     if (settings.voiceURI) {
-      const selectedVoice = speechSynthesis.getVoices().find(
-        voice => voice.voiceURI === settings.voiceURI
-      )
+      const allVoices = speechSynthesis.getVoices()
+      const selectedVoice = allVoices.find(voice => voice.voiceURI === settings.voiceURI)
+      
       if (selectedVoice) {
         utterance.voice = selectedVoice
+        console.log('🔊 Speaking with voice:', selectedVoice.name, `(${detectGender(selectedVoice.name)})`)
+      } else {
+        console.warn('⚠️ Selected voice not found, using default. URI:', settings.voiceURI)
+        // Try to find a voice that matches the preferred gender
+        const fallbackVoice = voices.find(v => v.gender === settings.preferredGender)
+        if (fallbackVoice) {
+          const actualFallback = allVoices.find(v => v.voiceURI === fallbackVoice.voiceURI)
+          if (actualFallback) {
+            utterance.voice = actualFallback
+            console.log('🔄 Using fallback voice:', actualFallback.name)
+          }
+        }
       }
+    } else {
+      console.log('🔊 Speaking with default voice (no voice selected)')
     }
 
-    // Event handlers
+    // Event handlers with enhanced logging
     utterance.onstart = () => {
+      console.log('🎤 Speech started')
       setIsSpeaking(true)
     }
 
     utterance.onend = () => {
+      console.log('🎤 Speech ended')
       setIsSpeaking(false)
     }
 
     utterance.onerror = (event) => {
-      console.error('Speech synthesis error:', event.error)
+      console.error('🚨 Speech synthesis error:', event.error)
       setIsSpeaking(false)
+      
+      // Try to recover by using default voice
+      if (utterance.voice) {
+        console.log('🔄 Retrying with default voice...')
+        const retryUtterance = new SpeechSynthesisUtterance(text)
+        retryUtterance.rate = settings.rate
+        retryUtterance.pitch = settings.pitch
+        retryUtterance.volume = settings.volume
+        // Don't set voice, use default
+        speechSynthesis.speak(retryUtterance)
+      }
     }
 
     // Speak
     speechSynthesis.speak(utterance)
-  }, [settings])
+  }, [settings, voices])
 
   // Stop speaking
   const stop = useCallback(() => {
@@ -246,13 +315,26 @@ export const useSpeechSynthesis = () => {
 
   // Change preferred gender and auto-select best voice of that gender
   const changePreferredGender = useCallback((gender: 'male' | 'female' | 'any') => {
+    console.log('🎭 Changing preferred gender to:', gender)
+    
     const voicesOfGender = voices.filter(v => 
       gender === 'any' ? true : v.gender === gender
     )
     
+    console.log(`🔍 Found ${voicesOfGender.length} voices for gender "${gender}":`, 
+      voicesOfGender.map(v => `${v.name} (${v.gender})`))
+    
     if (voicesOfGender.length > 0) {
       // Select best voice of preferred gender
-      const bestVoice = voicesOfGender.find(v => v.localService) || voicesOfGender[0]
+      // Priority: local service > high quality indicators > first available
+      const bestVoice = voicesOfGender.find(v => v.localService) || 
+                       voicesOfGender.find(v => {
+                         const name = v.name.toLowerCase()
+                         return name.includes('enhanced') || name.includes('premium') || name.includes('neural')
+                       }) ||
+                       voicesOfGender[0]
+      
+      console.log('✅ Selected best voice:', bestVoice.name, `(${bestVoice.gender})`)
       
       const newSettings = {
         ...settings,
@@ -263,7 +345,21 @@ export const useSpeechSynthesis = () => {
       
       setSettings(newSettings)
       saveSettings(newSettings)
+      
+      // Test the voice immediately to verify it works
+      setTimeout(() => {
+        const testUtterance = new SpeechSynthesisUtterance('Test')
+        const actualVoice = speechSynthesis.getVoices().find(v => v.voiceURI === bestVoice.voiceURI)
+        if (actualVoice) {
+          testUtterance.voice = actualVoice
+          testUtterance.volume = 0.1 // Very quiet test
+          console.log('🧪 Testing voice:', actualVoice.name)
+          speechSynthesis.speak(testUtterance)
+        }
+      }, 100)
+      
     } else {
+      console.warn(`⚠️ No voices found for gender "${gender}", updating preference only`)
       // Just update the preference
       updateSettings({ preferredGender: gender })
     }

@@ -3,6 +3,7 @@ import Header from './components/Header.tsx'
 import PronunciationPractice from './components/PronunciationPractice.tsx'
 import LessonSelector from './components/LessonSelector.tsx'
 import ArticlePractice from './components/ArticlePractice.tsx'
+import VoiceDebugPanel from './components/VoiceDebugPanel.tsx'
 import { lessons } from './data/lessons'
 import type { Lesson } from './types'
 
@@ -60,6 +61,7 @@ function App() {
       <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 lg:py-8">
         {renderContent()}
       </main>
+      <VoiceDebugPanel />
     </div>
   )
 }
