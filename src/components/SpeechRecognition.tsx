@@ -142,20 +142,20 @@ const SpeechRecognition = ({
 
       const recognition = recognitionRef.current
       
-      // Ultra-robust Android configuration
+      // Optimized configuration based on mode
       if (isAndroidChrome) {
-        // Android Chrome: Ultra-conservative settings
-        recognition.continuous = true
+        // Android Chrome: Stable hold-to-speak configuration
+        recognition.continuous = microphoneMode === 'toggle' // Only continuous for toggle mode
         recognition.interimResults = true
         recognition.lang = 'en-US'
         
-        // Android-specific optimizations
+        // Android-specific optimizations for stability
         // @ts-expect-error non-standard properties
         recognition.maxAlternatives = 1
         // @ts-expect-error non-standard properties
         recognition.serviceURI = undefined
         
-        console.log('🤖 Android Chrome: Ultra-robust mode activated')
+        console.log('🤖 Android Chrome: Stable hold-to-speak mode activated')
       } else {
         // Desktop/other devices: Standard configuration
         recognition.continuous = microphoneMode === 'toggle'
@@ -231,8 +231,10 @@ const SpeechRecognition = ({
           
           // Calculate adaptive timeout based on target sentence length and mode
           const targetWords = targetSentence.split(' ').length
-          const baseTimeout = microphoneMode === 'toggle' ? 3000 : 2000 // Longer for toggle mode
-          const adaptiveTimeout = Math.max(baseTimeout, Math.min(targetWords * 600, 10000)) // 3-10 seconds for toggle
+          const baseTimeout = microphoneMode === 'toggle' ? 3000 : 1500 // Shorter for hold mode
+          const adaptiveTimeout = microphoneMode === 'toggle' 
+            ? Math.max(baseTimeout, Math.min(targetWords * 600, 10000)) // 3-10 seconds for toggle
+            : Math.max(baseTimeout, Math.min(targetWords * 400, 5000))   // 1.5-5 seconds for hold
           
           silenceTimeoutRef.current = setTimeout(() => {
             console.log('🔇 Silence detected, processing accumulated result')
@@ -310,7 +312,7 @@ const SpeechRecognition = ({
           timeoutRef.current = null
         }
 
-        // Ultra-robust Android handling
+        // Stable Android handling for hold-to-speak mode
         if (androidMode && isRecordingRef.current) {
           const timeSinceLastSuccess = Date.now() - lastSuccessTimeRef.current
           const hasAccumulatedText = accumulatedTranscriptRef.current.trim().length > 0
@@ -319,62 +321,119 @@ const SpeechRecognition = ({
             timeSinceLastSuccess,
             hasAccumulatedText,
             quickRestartCount: quickRestartCountRef.current,
-            connectionAttempts
+            connectionAttempts,
+            microphoneMode
           })
           
-          // If we have accumulated text and it's been a while, process it
-          if (hasAccumulatedText && timeSinceLastSuccess > 5000) {
-            console.log('🤖 Android: Processing accumulated text after timeout')
-            processAccumulatedResult()
-            restartCountRef.current = 0
-            setRestartAttempts(0)
-            isRecordingRef.current = false
-            onStopRecording()
-            return
-          }
-          
-          // Quick restart for Android (aggressive reconnection)
-          if (quickRestartCountRef.current < 15) { // Increased attempts for Android
-            quickRestartCountRef.current++
-            setRestartAttempts(quickRestartCountRef.current)
-            
-            // Very fast restart for Android
-            const delay = Math.min(100 + (quickRestartCountRef.current * 50), 500) // 100ms, 150ms, 200ms... up to 500ms
-            
-            if (androidRestartTimeoutRef.current) {
-              clearTimeout(androidRestartTimeoutRef.current)
+          // For hold mode: Less aggressive restart, more stable
+          if (microphoneMode === 'hold') {
+            // If we have accumulated text, process it after shorter delay
+            if (hasAccumulatedText && timeSinceLastSuccess > 2000) {
+              console.log('🤖 Android hold mode: Processing accumulated text')
+              processAccumulatedResult()
+              restartCountRef.current = 0
+              setRestartAttempts(0)
+              isRecordingRef.current = false
+              onStopRecording()
+              return
             }
             
-            androidRestartTimeoutRef.current = setTimeout(() => {
-              if (recognitionRef.current && isRecordingRef.current) {
-                try {
-                  console.log(`🤖 Android quick restart (attempt ${quickRestartCountRef.current}/15, delay: ${delay}ms)`)
-                  recognitionRef.current.start()
-                } catch (error) {
-                  console.error('🤖 Android restart failed:', error)
-                  if (quickRestartCountRef.current >= 15) {
-                    console.log('🤖 Android: Max quick restarts reached')
-                    if (hasAccumulatedText) {
-                      processAccumulatedResult()
+            // Moderate restart attempts for hold mode (less aggressive)
+            if (quickRestartCountRef.current < 5) { // Reduced from 15 to 5 for stability
+              quickRestartCountRef.current++
+              setRestartAttempts(quickRestartCountRef.current)
+              
+              // Slower restart for stability
+              const delay = Math.min(300 + (quickRestartCountRef.current * 200), 1000) // 300ms, 500ms, 700ms, 900ms, 1000ms
+              
+              if (androidRestartTimeoutRef.current) {
+                clearTimeout(androidRestartTimeoutRef.current)
+              }
+              
+              androidRestartTimeoutRef.current = setTimeout(() => {
+                if (recognitionRef.current && isRecordingRef.current) {
+                  try {
+                    console.log(`🤖 Android hold mode restart (attempt ${quickRestartCountRef.current}/5, delay: ${delay}ms)`)
+                    recognitionRef.current.start()
+                  } catch (error) {
+                    console.error('🤖 Android restart failed:', error)
+                    if (quickRestartCountRef.current >= 5) {
+                      console.log('🤖 Android: Max restarts reached for hold mode')
+                      if (hasAccumulatedText) {
+                        processAccumulatedResult()
+                      }
+                      isRecordingRef.current = false
+                      setRestartAttempts(0)
+                      onStopRecording()
                     }
-                    isRecordingRef.current = false
-                    setRestartAttempts(0)
-                    onStopRecording()
                   }
                 }
+              }, delay)
+              return
+            } else {
+              console.log('🤖 Android hold mode: Max restarts reached, processing any accumulated text')
+              if (hasAccumulatedText) {
+                processAccumulatedResult()
               }
-            }, delay)
-            return
-          } else {
-            console.log('🤖 Android: Max restarts reached, processing any accumulated text')
-            if (hasAccumulatedText) {
-              processAccumulatedResult()
+              restartCountRef.current = 0
+              setRestartAttempts(0)
+              isRecordingRef.current = false
+              onStopRecording()
+              return
             }
-            restartCountRef.current = 0
-            setRestartAttempts(0)
-            isRecordingRef.current = false
-            onStopRecording()
-            return
+          } else {
+            // Toggle mode: Keep more aggressive restart for continuous operation
+            if (hasAccumulatedText && timeSinceLastSuccess > 5000) {
+              console.log('🤖 Android toggle mode: Processing accumulated text after timeout')
+              processAccumulatedResult()
+              restartCountRef.current = 0
+              setRestartAttempts(0)
+              isRecordingRef.current = false
+              onStopRecording()
+              return
+            }
+            
+            if (quickRestartCountRef.current < 10) { // Moderate for toggle mode
+              quickRestartCountRef.current++
+              setRestartAttempts(quickRestartCountRef.current)
+              
+              const delay = Math.min(200 + (quickRestartCountRef.current * 100), 800)
+              
+              if (androidRestartTimeoutRef.current) {
+                clearTimeout(androidRestartTimeoutRef.current)
+              }
+              
+              androidRestartTimeoutRef.current = setTimeout(() => {
+                if (recognitionRef.current && isRecordingRef.current) {
+                  try {
+                    console.log(`🤖 Android toggle mode restart (attempt ${quickRestartCountRef.current}/10, delay: ${delay}ms)`)
+                    recognitionRef.current.start()
+                  } catch (error) {
+                    console.error('🤖 Android restart failed:', error)
+                    if (quickRestartCountRef.current >= 10) {
+                      console.log('🤖 Android: Max toggle restarts reached')
+                      if (hasAccumulatedText) {
+                        processAccumulatedResult()
+                      }
+                      isRecordingRef.current = false
+                      setRestartAttempts(0)
+                      onStopRecording()
+                    }
+                  }
+                }
+              }, delay)
+              return
+            } else {
+              console.log('🤖 Android toggle mode: Max restarts reached, processing any accumulated text')
+              if (hasAccumulatedText) {
+                processAccumulatedResult()
+              }
+              restartCountRef.current = 0
+              setRestartAttempts(0)
+              isRecordingRef.current = false
+              onStopRecording()
+              return
+            }
           }
         }
 
@@ -661,7 +720,7 @@ const SpeechRecognition = ({
         // Set timeout based on microphone mode
         const timeoutDuration = microphoneMode === 'toggle' 
           ? 45000 // 45 seconds for toggle mode (longer for user control)
-          : 60000 // 60 seconds for hold mode
+          : 15000 // 15 seconds for hold mode (shorter, user controls duration)
           
         timeoutRef.current = setTimeout(() => {
           console.log(`⏰ Recording timeout after ${timeoutDuration/1000} seconds`)
@@ -849,7 +908,7 @@ const SpeechRecognition = ({
                 <p className="text-gray-600 text-sm sm:text-base">
                   <span>
                     {androidMode 
-                      ? 'Android Mode: Keep speaking...' 
+                      ? 'Android Mode: Keep holding and speaking...' 
                       : microphoneMode === 'hold' 
                         ? 'Keep holding and speaking...' 
                         : 'Recording... Speak your sentence!'
@@ -868,7 +927,7 @@ const SpeechRecognition = ({
                 <div className="mt-2">
                   <div className="text-xs text-blue-600">
                     {androidMode 
-                      ? `🤖 Ultra-robust mode active • Connection: ${isAndroidStable ? 'Stable' : 'Reconnecting'}`
+                      ? `🤖 Ultra-robust hold mode • Connection: ${isAndroidStable ? 'Stable' : 'Reconnecting'}`
                       : microphoneMode === 'toggle' 
                         ? '🔄 Collecting speech... Click Stop when finished'
                         : '📱 Collecting speech... Release when done'
@@ -888,7 +947,7 @@ const SpeechRecognition = ({
               <div className="text-center">
                 <p className="text-gray-500 text-xs mb-2">
                   {androidMode 
-                    ? '🤖 Android Ultra-Robust Mode: Click to start, speak entire sentence, click to stop'
+                    ? '🤖 Android Ultra-Robust Mode: Hold button while speaking, release when done'
                     : microphoneMode === 'toggle' 
                       ? '🔄 Toggle mode: Click to start recording, click again to stop and evaluate'
                       : '📱 Hold mode: Hold button while speaking entire sentence, then release'
@@ -896,7 +955,7 @@ const SpeechRecognition = ({
                 </p>
                 {androidMode && (
                   <div className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded inline-block">
-                    ✅ Enhanced stability for Android Chrome
+                    ✅ Enhanced stability for Android Chrome (Hold Mode)
                   </div>
                 )}
               </div>

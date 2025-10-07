@@ -54,9 +54,21 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
       return holdToSpeak ? 'hold' : 'toggle'
     }
     
-    // CHANGED: Default to toggle for ALL devices (more stable)
-    console.log('🔄 Auto-detected: using tap-to-toggle for all devices (more stable)')
-    return 'toggle'
+    // Android Chrome: Use hold-to-speak (more stable than toggle mode)
+    if (deviceInfo.isAndroidChrome) {
+      console.log('📱 Auto-detected Android Chrome: using hold-to-speak (more stable)')
+      return 'hold'
+    } 
+    // Other mobile devices: Also use hold-to-speak for consistency
+    else if (deviceInfo.isMobile) {
+      console.log('📱 Auto-detected mobile device: using hold-to-speak')
+      return 'hold'
+    } 
+    // Desktop: Use toggle mode
+    else {
+      console.log('💻 Auto-detected desktop/laptop: using tap-to-toggle')
+      return 'toggle'
+    }
   }, [holdToSpeak, deviceInfo])
 
   const isHoldMode = microphoneBehavior === 'hold'
@@ -145,16 +157,46 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                 />
 
                 <button
-                  onClick={() => {
-                    console.log('🎤 Microphone button clicked - current state:', isRecording)
-                    if (isRecording) {
-                      console.log('🛑 Stopping recording...')
-                      setIsRecording(false)
-                    } else {
-                      console.log('🎤 Starting recording...')
+                  {...(isHoldMode ? {
+                    // Hold-to-speak mode (Android Chrome) - RESTORED
+                    onPointerDown: (e) => {
+                      e.preventDefault()
+                      console.log('🎤 Hold mode: Pointer down - starting recording')
                       setIsRecording(true)
+                    },
+                    onPointerUp: (e) => {
+                      e.preventDefault()
+                      console.log('🛑 Hold mode: Pointer up - stopping recording')
+                      setIsRecording(false)
+                    },
+                    onPointerLeave: (e) => {
+                      e.preventDefault()
+                      console.log('🛑 Hold mode: Pointer leave - stopping recording')
+                      setIsRecording(false)
+                    },
+                    onTouchStart: (e) => {
+                      e.preventDefault()
+                      console.log('🎤 Hold mode: Touch start - starting recording')
+                      setIsRecording(true)
+                    },
+                    onTouchEnd: (e) => {
+                      e.preventDefault()
+                      console.log('🛑 Hold mode: Touch end - stopping recording')
+                      setIsRecording(false)
                     }
-                  }}
+                  } : {
+                    // Tap-to-toggle mode (Desktop)
+                    onClick: () => {
+                      console.log('🎤 Toggle mode: Click - current state:', isRecording)
+                      if (isRecording) {
+                        console.log('🛑 Toggle mode: Stopping recording...')
+                        setIsRecording(false)
+                      } else {
+                        console.log('🎤 Toggle mode: Starting recording...')
+                        setIsRecording(true)
+                      }
+                    }
+                  })}
                   disabled={showResult}
                   className={`inline-flex items-center space-x-2 px-3 sm:px-4 py-2 rounded-lg transition-colors text-sm sm:text-base select-none ${isRecording
                     ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
@@ -163,10 +205,16 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                 >
                   <span>{isRecording ? '⏹️' : '🎤'}</span>
                   <span className="hidden sm:inline">
-                    {isRecording ? 'Stop Recording' : 'Start Recording'}
+                    {isHoldMode 
+                      ? (isRecording ? 'Release to Stop' : 'Hold to Speak')
+                      : (isRecording ? 'Stop Recording' : 'Start Recording')
+                    }
                   </span>
                   <span className="sm:hidden">
-                    {isRecording ? 'Stop' : 'Record'}
+                    {isHoldMode 
+                      ? (isRecording ? 'Release' : 'Hold')
+                      : (isRecording ? 'Stop' : 'Record')
+                    }
                   </span>
                 </button>
               </div>
@@ -183,11 +231,11 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                   {isHoldMode ? '📱 Hold to Speak' : '🔄 Tap to Toggle'}
                 </button>
                 <span className="text-gray-400">
-                  ({deviceInfo.isAndroidChrome ? 'Android' : deviceInfo.isDesktop ? 'Desktop' : 'Mobile'} • Default: Toggle)
+                  ({deviceInfo.isAndroidChrome ? 'Android' : deviceInfo.isDesktop ? 'Desktop' : 'Mobile'} detected)
                 </span>
               </div>
               <div className="mt-1 text-xs text-gray-500">
-                💡 Toggle mode is more stable on all devices
+                💡 {deviceInfo.isAndroidChrome ? 'Hold mode works better on Android' : 'Toggle mode for desktop stability'}
               </div>
             </div>
 
