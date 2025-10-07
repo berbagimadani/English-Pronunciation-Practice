@@ -238,6 +238,21 @@ const SpeechControls = ({
             (Preference: {settings.preferredGender === 'male' ? '👨 Male' : settings.preferredGender === 'female' ? '👩 Female' : '🎭 Any'})
           </span>
         </label>
+        {recommendedVoices.length === 0 && (
+          <div className="mb-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-2 space-y-1">
+            <div>No matching voices found for your preference on this device.</div>
+            <div>Showing all available English voices.</div>
+            <details className="mt-1">
+              <summary className="cursor-pointer text-amber-800 underline">How to enable more voices on Android</summary>
+              <ul className="list-disc ml-4 mt-1 space-y-1 text-amber-800">
+                <li>Open Settings → System → Languages & input → Text-to-speech output</li>
+                <li>Select Google Text-to-speech → Install voice data</li>
+                <li>Under English, download a Male voice (if available)</li>
+                <li>Restart the browser and reload this page</li>
+              </ul>
+            </details>
+          </div>
+        )}
         
         {recommendedVoices.length > 0 && (
           <div className="space-y-2">

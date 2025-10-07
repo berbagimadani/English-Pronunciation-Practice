@@ -10,6 +10,8 @@ interface SpeechRecognitionProps {
   onResult: (result: RecognitionResult) => void
   showResult: boolean
   hideButton?: boolean
+  deviceType?: 'desktop' | 'mobile'
+  microphoneMode?: 'hold' | 'toggle'
 }
 
 const SpeechRecognition = ({
@@ -19,7 +21,9 @@ const SpeechRecognition = ({
   onStopRecording,
   onResult,
   showResult,
-  hideButton = false
+  hideButton = false,
+  deviceType = 'desktop',
+  microphoneMode = 'toggle'
 }: SpeechRecognitionProps) => {
   const [transcript, setTranscript] = useState('')
   const [isSupported, setIsSupported] = useState(false)
@@ -116,21 +120,34 @@ const SpeechRecognition = ({
       recognitionRef.current = new SpeechRecognition()
 
       const recognition = recognitionRef.current
-      recognition.continuous = true  // ✅ CHANGE: Set to true for Ubuntu
-      recognition.interimResults = true
+      
+      // Configure based on device type and microphone mode
+      if (deviceType === 'desktop' && microphoneMode === 'toggle') {
+        // Desktop tap-to-toggle: use non-continuous mode to prevent auto-restart
+        recognition.continuous = false
+        recognition.interimResults = true
+        console.log('🖥️ Desktop tap-to-toggle mode: continuous=false')
+      } else {
+        // Mobile or hold-to-speak: use continuous mode for stability
+        recognition.continuous = true
+        recognition.interimResults = true
+        console.log('📱 Mobile/hold mode: continuous=true')
+      }
+      
       recognition.lang = 'en-US'
 
-      // Ubuntu-specific configurations
+      // Platform-specific configurations
       // @ts-expect-error non-standard in some implementations
       recognition.maxAlternatives = 1
       // @ts-expect-error non-standard in some implementations  
       recognition.serviceURI = undefined // Use default service
 
-      console.log('🔧 Speech Recognition configured (Ubuntu optimized):', {
+      console.log('🔧 Speech Recognition configured:', {
+        deviceType,
+        microphoneMode,
         continuous: recognition.continuous,
         interimResults: recognition.interimResults,
-        lang: recognition.lang,
-        note: 'continuous=true to prevent immediate timeout'
+        lang: recognition.lang
       })
 
       recognition.onstart = () => {
@@ -199,37 +216,45 @@ const SpeechRecognition = ({
           timeoutRef.current = null
         }
 
-        // If we're supposed to be recording and this is an unexpected end, try to restart
-        if (isRecordingRef.current && restartCountRef.current < 10) { // Increased from 3 to 10
-          console.log(`🔄 Attempting to restart recognition (attempt ${restartCountRef.current + 1}/10)`)
-          restartCountRef.current++
-          setRestartAttempts(restartCountRef.current) // Update UI
-
-          // Longer delay before restart for Ubuntu stability
-          const delay = Math.min(500 + (restartCountRef.current * 200), 2000) // Progressive delay: 500ms, 700ms, 900ms... up to 2s
-          setTimeout(() => {
-            if (recognitionRef.current && isRecordingRef.current) {
-              try {
-                console.log(`🔄 Restarting speech recognition... (delay: ${delay}ms)`)
-                recognitionRef.current.start()
-              } catch (error) {
-                console.error('❌ Failed to restart recognition:', error)
-                // Don't stop immediately, let it try again
-                if (restartCountRef.current >= 10) {
-                  isRecordingRef.current = false
-                  setRestartAttempts(0)
-                  onStopRecording()
-                }
-              }
-            }
-          }, delay)
-        } else {
-          // Reset restart counter and stop recording
-          console.log('🛑 Stopping recording (max restarts reached or manual stop)')
+        // Handle restart logic based on device type and mode
+        if (deviceType === 'desktop' && microphoneMode === 'toggle') {
+          // Desktop tap-to-toggle: don't auto-restart, let user control
+          console.log('🖥️ Desktop mode: Recognition ended, not auto-restarting')
           restartCountRef.current = 0
           setRestartAttempts(0)
           isRecordingRef.current = false
           onStopRecording()
+        } else {
+          // Mobile or hold-to-speak: auto-restart if still supposed to be recording
+          if (isRecordingRef.current && restartCountRef.current < 5) { // Reduced from 10 to 5 for mobile
+            console.log(`🔄 Mobile/hold mode: Attempting to restart recognition (attempt ${restartCountRef.current + 1}/5)`)
+            restartCountRef.current++
+            setRestartAttempts(restartCountRef.current)
+
+            // Shorter delay for mobile responsiveness
+            const delay = Math.min(300 + (restartCountRef.current * 100), 1000) // 300ms, 400ms, 500ms... up to 1s
+            setTimeout(() => {
+              if (recognitionRef.current && isRecordingRef.current) {
+                try {
+                  console.log(`🔄 Restarting speech recognition... (delay: ${delay}ms)`)
+                  recognitionRef.current.start()
+                } catch (error) {
+                  console.error('❌ Failed to restart recognition:', error)
+                  if (restartCountRef.current >= 5) {
+                    isRecordingRef.current = false
+                    setRestartAttempts(0)
+                    onStopRecording()
+                  }
+                }
+              }
+            }, delay)
+          } else {
+            console.log('🛑 Stopping recording (max restarts reached or manual stop)')
+            restartCountRef.current = 0
+            setRestartAttempts(0)
+            isRecordingRef.current = false
+            onStopRecording()
+          }
         }
       }
     }
@@ -344,14 +369,18 @@ const SpeechRecognition = ({
         recognitionRef.current.start()
         console.log('✅ Speech recognition start() called successfully')
 
-        // Set a longer timeout for Ubuntu (speech recognition can be slower to initialize)
+        // Set timeout based on device type and mode
+        const timeoutDuration = deviceType === 'desktop' && microphoneMode === 'toggle' 
+          ? 30000 // 30 seconds for desktop tap-to-toggle
+          : 60000 // 60 seconds for mobile/hold mode
+          
         timeoutRef.current = setTimeout(() => {
-          console.log('⏰ Recording timeout after 60 seconds')
+          console.log(`⏰ Recording timeout after ${timeoutDuration/1000} seconds`)
           if (recognitionRef.current && isRecordingRef.current) {
             isRecordingRef.current = false
             recognitionRef.current.stop()
           }
-        }, 60000) // Increased to 60 second timeout
+        }, timeoutDuration)
       } catch (error) {
         console.error('❌ Failed to start speech recognition:', error)
         onStopRecording() // Reset state on error
@@ -520,10 +549,20 @@ const SpeechRecognition = ({
                   Listening... Speak clearly!
                   {restartAttempts > 0 && (
                     <span className="block text-xs text-orange-600 mt-1">
-                      🔄 Reconnecting... (attempt {restartAttempts}/10)
+                      🔄 Reconnecting... (attempt {restartAttempts}/{deviceType === 'desktop' ? '1' : '5'})
                     </span>
                   )}
                 </span>
+              </p>
+            )}
+
+            {/* Device-specific instructions */}
+            {hideButton && !isRecording && (
+              <p className="text-gray-500 text-xs mb-2">
+                {deviceType === 'desktop' && microphoneMode === 'toggle' 
+                  ? '💻 Desktop mode: Click once to start, click again to stop'
+                  : '📱 Mobile mode: Hold button to speak, release to stop'
+                }
               </p>
             )}
 

@@ -69,10 +69,10 @@ export const useSpeechSynthesis = () => {
     })
     
     const voiceOptions: VoiceOption[] = availableVoices
-      .filter(voice => voice.lang.startsWith('en')) // English voices only
+      .filter(voice => voice.lang?.toLowerCase().startsWith('en')) // English voices only
       .map(voice => {
-        const gender = detectGender(voice.name)
-        console.log(`🎭 Voice "${voice.name}" detected as: ${gender}`)
+        const gender = detectGender(voice.name, voice.voiceURI)
+        console.log(`🎭 Voice "${voice.name}" (${voice.voiceURI}) detected as: ${gender}`)
         return {
           name: voice.name,
           lang: voice.lang,
@@ -134,15 +134,16 @@ export const useSpeechSynthesis = () => {
   }, [])
 
   // Enhanced gender detection for Android and other platforms
-  const detectGender = (voiceName: string): 'male' | 'female' | 'unknown' => {
-    const name = voiceName.toLowerCase()
+  const detectGender = (voiceName: string, voiceURI?: string): 'male' | 'female' | 'unknown' => {
+    const name = (voiceName || '').toLowerCase()
+    const uri = (voiceURI || '').toLowerCase()
     
     // Enhanced Android-specific voice patterns
     const androidMalePatterns = [
       // Explicit gender indicators
-      'male', 'man', 'masculine', 'boy', 'guy', 'gentleman', 'mr', 'sir',
+      'male', 'man', 'masculine', 'boy', 'guy', 'gentleman', 'mr', 'sir', '#male', '_male', '-male',
       // Google TTS voices
-      'google male', 'android male', 'google us male', 'google uk male',
+      'google male', 'android male', 'google us male', 'google uk male', 'com.google.android.tts:male',
       // Samsung voices
       'samsung male', 'bixby male', 'samsung english male',
       // Common male names in TTS
@@ -158,9 +159,9 @@ export const useSpeechSynthesis = () => {
     
     const androidFemalePatterns = [
       // Explicit gender indicators
-      'female', 'woman', 'feminine', 'girl', 'lady', 'miss', 'mrs', 'ms', 'madam',
+      'female', 'woman', 'feminine', 'girl', 'lady', 'miss', 'mrs', 'ms', 'madam', '#female', '_female', '-female',
       // Google TTS voices
-      'google female', 'android female', 'google us female', 'google uk female',
+      'google female', 'android female', 'google us female', 'google uk female', 'com.google.android.tts:female',
       // Samsung voices
       'samsung female', 'bixby female', 'samsung english female',
       // Common female names in TTS
@@ -175,10 +176,10 @@ export const useSpeechSynthesis = () => {
     ]
 
     // Check for explicit gender indicators first
-    if (androidMalePatterns.some(pattern => name.includes(pattern))) {
+    if (androidMalePatterns.some(pattern => name.includes(pattern) || uri.includes(pattern))) {
       return 'male'
     }
-    if (androidFemalePatterns.some(pattern => name.includes(pattern))) {
+    if (androidFemalePatterns.some(pattern => name.includes(pattern) || uri.includes(pattern))) {
       return 'female'
     }
     
@@ -187,13 +188,13 @@ export const useSpeechSynthesis = () => {
     // We'll use additional context clues
     
     // Check for numbered voices (often gender-specific on Android)
-    if (name.includes('voice 1') || name.includes('voice 3') || name.includes('voice 5')) {
+    if (name.includes('voice 1') || name.includes('voice 3') || name.includes('voice 5') || uri.includes('male_')) {
       return 'male' // Odd numbers often male on Android
     }
-    if (name.includes('voice 2') || name.includes('voice 4') || name.includes('voice 6')) {
+    if (name.includes('voice 2') || name.includes('voice 4') || name.includes('voice 6') || uri.includes('female_')) {
       return 'female' // Even numbers often female on Android
     }
-    
+
     return 'unknown'
   }
 
