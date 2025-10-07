@@ -12,19 +12,23 @@ interface ArticlePracticeProps {
 }
 
 const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
-  const { 
-    article, 
-    currentSentence, 
-    isLoading, 
-    error, 
-    loadRandomArticle, 
+  const {
+    article,
+    currentSentence,
+    isLoading,
+    error,
+    loadRandomArticle,
     getRandomSentence,
-    hasMultipleSentences 
+    hasMultipleSentences
   } = useArticles()
 
   const [isRecording, setIsRecording] = useState(false)
   const [showResult, setShowResult] = useState(false)
   const [lastResult, setLastResult] = useState<RecognitionResult | null>(null)
+  
+  // Timer state
+  const [timerTimeLeft, setTimerTimeLeft] = useState(0)
+  const [isTimerActive, setIsTimerActive] = useState(false)
 
   const handleRecognitionResult = (result: RecognitionResult) => {
     setLastResult(result)
@@ -120,16 +124,16 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
           <span className="hidden sm:inline">Back to Lessons</span>
           <span className="sm:hidden">Back</span>
         </button>
-        
+
         <div className="flex items-center space-x-2">
           {/* Title */}
           <div className="text-right mr-3">
             <h2 className="text-base sm:text-lg lg:text-xl font-semibold text-gray-900">Article Practice</h2>
             <p className="text-xs sm:text-sm text-gray-600">Real News Content</p>
           </div>
-          
 
-          
+
+
           <button
             onClick={handleNewSentence}
             className="flex items-center space-x-1 px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600 transition-colors"
@@ -155,18 +159,18 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
         {/* Practice Section */}
         <div className="text-center mb-6 sm:mb-8">
           <h4 className="text-xs sm:text-sm font-medium text-gray-500 mb-3 sm:mb-4">Practice this sentence:</h4>
-          
+
           {/* Clickable Sentence */}
           <div className="mb-4 sm:mb-6 p-3 sm:p-4 lg:p-6 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg sm:rounded-xl border-2 border-green-200 shadow-sm">
             <ClickableSentence sentence={currentSentence} />
           </div>
-          
+
           {/* Phonetic Transcription */}
           <PhoneticDisplay text={currentSentence} className="mb-4 sm:mb-6" />
 
           {/* Timer Mode Button */}
           <div className="flex justify-center space-x-3 mb-4">
-            <SpeechControls 
+            <SpeechControls
               text={currentSentence}
               compact={true}
               showSettings={true}
@@ -185,17 +189,18 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
                 }
               }}
               disabled={showResult}
-              className={`inline-flex items-center space-x-2 px-3 sm:px-4 py-2 rounded-lg transition-colors text-sm sm:text-base select-none ${isRecording
-                ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
-                : 'bg-green-600 hover:bg-green-700 text-white'
-                }`}
+              className={`inline-flex items-center space-x-2 px-4 sm:px-6 py-3 rounded-lg transition-all duration-200 text-sm sm:text-base select-none font-medium shadow-lg ${
+                isRecording
+                  ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                  : 'bg-green-600 hover:bg-green-700 text-white hover:shadow-xl'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              <span>{isRecording ? '⏹️' : '🎤'}</span>
+              <span className="text-lg">{isRecording ? '⏹️' : '🎤'}</span>
               <span className="hidden sm:inline">
-                {isRecording ? 'Stop Timer' : 'Start Timer'}
+                {isRecording ? 'Stop Recording' : 'Start Timer Recording'}
               </span>
               <span className="sm:hidden">
-                {isRecording ? 'Stop' : 'Timer'}
+                {isRecording ? 'Stop' : 'Record'}
               </span>
             </button>
           </div>
@@ -251,7 +256,7 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
 
       {/* Speech Settings Section */}
       <div className="bg-white rounded-lg sm:rounded-xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">
-        <SpeechControls 
+        <SpeechControls
           text={currentSentence}
           compact={false}
           showSettings={true}

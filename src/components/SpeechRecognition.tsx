@@ -12,6 +12,7 @@ interface SpeechRecognitionProps {
   hideButton?: boolean
   deviceType?: 'desktop' | 'mobile'
   microphoneMode?: 'hold' | 'toggle' | 'timer'
+  onTimerUpdate?: (timeLeft: number, isActive: boolean) => void
 }
 
 const SpeechRecognition = ({
@@ -23,7 +24,8 @@ const SpeechRecognition = ({
   showResult,
   hideButton = false,
   deviceType = 'desktop',
-  microphoneMode = 'timer'
+  microphoneMode = 'timer',
+  onTimerUpdate
 }: SpeechRecognitionProps) => {
   const [transcript, setTranscript] = useState('')
   const [isSupported, setIsSupported] = useState(false)
@@ -697,33 +699,39 @@ const SpeechRecognition = ({
     return Math.round((matches / maxLength) * 100)
   }
 
-  // Timer mode functions
+  // Simplified timer functions - timer controls everything
   const startTimer = () => {
     const duration = calculateAdaptiveTimer
     setRecordingTimeLeft(duration)
     setIsTimerActive(true)
     
-    console.log(`⏱️ Starting ${duration}s timer for sentence: "${targetSentence}"`)
+    // Notify parent about timer start
+    onTimerUpdate?.(duration, true)
     
-    // Update countdown every second
+    console.log(`⏱️ Starting ${duration}s countdown timer for: "${targetSentence}"`)
+    
+    // Update countdown every second - this controls the entire recording state
     timerIntervalRef.current = setInterval(() => {
       setRecordingTimeLeft(prev => {
-        if (prev <= 1) {
-          // Timer finished
+        const newTime = prev - 1
+        console.log(`⏱️ Timer countdown: ${newTime}s remaining`)
+        
+        // Notify parent about timer update
+        onTimerUpdate?.(newTime, newTime > 0)
+        
+        if (newTime <= 0) {
+          // Timer finished - stop everything immediately
+          console.log('⏱️ Timer finished - auto stopping recording')
           stopTimerRecording()
           return 0
         }
-        return prev - 1
+        return newTime
       })
     }, 1000)
-    
-    // Set absolute timeout as backup
-    adaptiveTimerRef.current = setTimeout(() => {
-      stopTimerRecording()
-    }, duration * 1000)
   }
   
   const stopTimer = () => {
+    console.log('⏱️ Stopping timer and clearing all intervals')
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current)
       timerIntervalRef.current = null
@@ -734,26 +742,34 @@ const SpeechRecognition = ({
     }
     setIsTimerActive(false)
     setRecordingTimeLeft(0)
+    
+    // Notify parent about timer stop
+    onTimerUpdate?.(0, false)
   }
   
   const stopTimerRecording = () => {
-    console.log('⏱️ Timer finished, stopping recording')
+    console.log('⏱️ Timer recording complete - processing results and updating state')
+    
+    // Stop timer first
     stopTimer()
     
     // Process any accumulated results
     if (accumulatedTranscriptRef.current.trim()) {
+      console.log('⏱️ Processing accumulated transcript:', accumulatedTranscriptRef.current)
       processAccumulatedResult()
     }
     
-    // Stop recognition and update state
+    // Stop recognition and update all states
     isRecordingRef.current = false
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop()
       } catch (error) {
-        console.log('Recognition already stopped')
+        console.log('⏱️ Recognition already stopped:', error)
       }
     }
+    
+    // Update parent component state - this will update button
     onStopRecording()
   }
 
@@ -838,21 +854,29 @@ const SpeechRecognition = ({
           console.log('🤖 Android: Starting new recording session')
         }
 
-        // Call onStartRecording first to update UI
-        onStartRecording()
-
-        // Timer mode: Start timer and recognition together
+        // Timer mode: Start timer first, then recognition
         if (microphoneMode === 'timer') {
+          console.log('⏱️ Timer mode: Starting countdown and recognition together')
+          
+          // Update parent state first to show loading button
+          onStartRecording()
+          
+          // Start countdown timer - this will control everything
           startTimer()
-          console.log('⏱️ Timer mode: Starting adaptive timer')
+          
+          // Small delay for stability
+          await new Promise(resolve => setTimeout(resolve, 300))
+          
+          // Start recognition
+          recognitionRef.current.start()
+          console.log('✅ Timer mode: Recognition started with countdown timer')
+        } else {
+          // Other modes: Standard flow
+          onStartRecording()
+          await new Promise(resolve => setTimeout(resolve, 200))
+          recognitionRef.current.start()
+          console.log('✅ Standard mode: Recognition started')
         }
-
-        // Ubuntu-specific: Add a small delay before starting
-        await new Promise(resolve => setTimeout(resolve, 200))
-
-        // Then start recognition
-        recognitionRef.current.start()
-        console.log('✅ Speech recognition start() called successfully')
 
         // Set timeout based on microphone mode
         let timeoutDuration: number
@@ -888,15 +912,16 @@ const SpeechRecognition = ({
   }
 
   const stopRecording = () => {
-    console.log('🛑 Stopping recording...')
+    console.log('🛑 Manual stop recording requested...')
 
     // Timer mode: Use timer stop function
     if (microphoneMode === 'timer') {
+      console.log('⏱️ Timer mode: Manual stop requested')
       stopTimerRecording()
       return
     }
 
-    // Clear all timeouts
+    // Clear all timeouts for other modes
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
       timeoutRef.current = null
@@ -926,6 +951,9 @@ const SpeechRecognition = ({
         console.error('❌ Error stopping recognition:', error)
       }
     }
+    
+    // Update parent state
+    onStopRecording()
   }
 
   // Diagnostic function to check audio devices
@@ -1022,12 +1050,20 @@ const SpeechRecognition = ({
               <button
                 onClick={isRecording ? stopRecording : startRecording}
                 disabled={showResult}
-                className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl font-bold transition-all duration-200 transform hover:scale-105 active:scale-95 ${isRecording
-                  ? 'bg-red-500 hover:bg-red-600 animate-pulse-slow'
-                  : 'bg-blue-500 hover:bg-blue-600'
+                className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl font-bold transition-all duration-200 transform hover:scale-105 active:scale-95 ${
+                  microphoneMode === 'timer' && isTimerActive
+                    ? 'bg-red-500 hover:bg-red-600 animate-pulse shadow-lg'
+                    : isRecording
+                      ? 'bg-red-500 hover:bg-red-600 animate-pulse-slow'
+                      : 'bg-blue-500 hover:bg-blue-600'
                   }`}
               >
-                {isRecording ? '⏹️' : '🎤'}
+                {microphoneMode === 'timer' && isTimerActive 
+                  ? recordingTimeLeft 
+                  : isRecording 
+                    ? '⏹️' 
+                    : '🎤'
+                }
               </button>
             </div>
           )}
@@ -1052,8 +1088,17 @@ const SpeechRecognition = ({
                   <span>
                     {microphoneMode === 'timer' ? (
                       <span>
-                        <span className="hidden sm:inline">Click to start {calculateAdaptiveTimer}s timer</span>
-                        <span className="sm:hidden">Tap for {calculateAdaptiveTimer}s timer</span>
+                        {isTimerActive ? (
+                          <span>
+                            <span className="hidden sm:inline">Recording for {recordingTimeLeft}s... Click to stop early</span>
+                            <span className="sm:hidden">Recording {recordingTimeLeft}s... Tap to stop</span>
+                          </span>
+                        ) : (
+                          <span>
+                            <span className="hidden sm:inline">Click to start {calculateAdaptiveTimer}s countdown timer</span>
+                            <span className="sm:hidden">Tap for {calculateAdaptiveTimer}s timer</span>
+                          </span>
+                        )}
                       </span>
                     ) : (
                       <span>
@@ -1090,17 +1135,23 @@ const SpeechRecognition = ({
                   </span>
                 </p>
                 
-                {/* Timer Display */}
-                {microphoneMode === 'timer' && isTimerActive && (
-                  <div className="mt-3 mb-2">
-                    <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full border-4 border-blue-500">
-                      <span className="text-2xl font-bold text-blue-600">
+                {/* Timer Countdown Display */}
+                {microphoneMode === 'timer' && isTimerActive && recordingTimeLeft > 0 && (
+                  <div className="mt-3 mb-4">
+                    <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-100 to-blue-200 rounded-full border-4 border-blue-500 shadow-lg">
+                      <span className="text-3xl font-bold text-blue-700">
                         {recordingTimeLeft}
                       </span>
                     </div>
-                    <p className="text-xs text-blue-600 mt-2">
-                      ⏱️ Adaptive timer: {calculateAdaptiveTimer}s for this sentence
+                    <p className="text-sm text-blue-600 mt-2 font-medium">
+                      ⏱️ Recording... {recordingTimeLeft}s remaining
                     </p>
+                    <div className="w-32 bg-gray-200 rounded-full h-2 mt-2 mx-auto">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-1000 ease-linear"
+                        style={{ width: `${(recordingTimeLeft / calculateAdaptiveTimer) * 100}%` }}
+                      ></div>
+                    </div>
                   </div>
                 )}
                 

@@ -18,6 +18,10 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
   const [results, setResults] = useState<RecognitionResult[]>([])
   const [showResult, setShowResult] = useState(false)
   const [lastResult, setLastResult] = useState<RecognitionResult | null>(null)
+  
+  // Timer state
+  const [timerTimeLeft, setTimerTimeLeft] = useState(0)
+  const [isTimerActive, setIsTimerActive] = useState(false)
 
 
   // Enhanced device detection for microphone behavior
@@ -71,6 +75,11 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
   const handleRetry = () => {
     setShowResult(false)
     setLastResult(null)
+  }
+
+  const handleTimerUpdate = (timeLeft: number, isActive: boolean) => {
+    setTimerTimeLeft(timeLeft)
+    setIsTimerActive(isActive)
   }
 
   const calculateOverallScore = () => {
@@ -145,17 +154,18 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
                     }
                   }}
                   disabled={showResult}
-                  className={`inline-flex items-center space-x-2 px-3 sm:px-4 py-2 rounded-lg transition-colors text-sm sm:text-base select-none ${isRecording
-                    ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
-                    : 'bg-green-600 hover:bg-green-700 text-white'
-                    }`}
+                  className={`inline-flex items-center space-x-2 px-4 sm:px-6 py-3 rounded-lg transition-all duration-200 text-sm sm:text-base select-none font-medium shadow-lg ${
+                    isRecording
+                      ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white hover:shadow-xl'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
-                  <span>{isRecording ? '⏹️' : '🎤'}</span>
+                  <span className="text-lg">{isRecording ? '⏹️' : '🎤'}</span>
                   <span className="hidden sm:inline">
-                    {isRecording ? 'Stop Timer' : 'Start Timer'}
+                    {isRecording ? 'Stop Recording' : 'Start Timer Recording'}
                   </span>
                   <span className="sm:hidden">
-                    {isRecording ? 'Stop' : 'Timer'}
+                    {isRecording ? 'Stop' : 'Record'}
                   </span>
                 </button>
               </div>
@@ -188,6 +198,7 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
               hideButton={true}
               deviceType={deviceInfo.isDesktop ? 'desktop' : 'mobile'}
               microphoneMode="timer"
+              onTimerUpdate={handleTimerUpdate}
             />
 
             {/* Result Display */}
