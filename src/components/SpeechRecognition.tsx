@@ -11,7 +11,7 @@ interface SpeechRecognitionProps {
   showResult: boolean
   hideButton?: boolean
   deviceType?: 'desktop' | 'mobile'
-  microphoneMode?: 'hold' | 'toggle'
+  microphoneMode?: 'hold' | 'toggle' | 'timer'
 }
 
 const SpeechRecognition = ({
@@ -23,7 +23,7 @@ const SpeechRecognition = ({
   showResult,
   hideButton = false,
   deviceType = 'desktop',
-  microphoneMode = 'toggle'
+  microphoneMode = 'timer'
 }: SpeechRecognitionProps) => {
   const [transcript, setTranscript] = useState('')
   const [isSupported, setIsSupported] = useState(false)
@@ -46,12 +46,48 @@ const SpeechRecognition = ({
   const androidRestartTimeoutRef = useRef<number | null>(null)
   const quickRestartCountRef = useRef(0)
   const lastSuccessTimeRef = useRef<number>(0)
+  
+  // Timer mode state
+  const [recordingTimeLeft, setRecordingTimeLeft] = useState(0)
+  const [isTimerActive, setIsTimerActive] = useState(false)
+  const timerIntervalRef = useRef<number | null>(null)
+  const adaptiveTimerRef = useRef<number | null>(null)
+  
   const { isSupported: apiSupported, hasPermission, permissionError, requestPermission } = useSpeechRecognition()
 
   const isSecure = useMemo(() => {
     if (typeof window === 'undefined') return false
     return window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1'
   }, [])
+
+  // Calculate adaptive timer based on sentence length
+  const calculateAdaptiveTimer = useMemo(() => {
+    const words = targetSentence.trim().split(/\s+/).length
+
+    
+    // Base calculation: 
+    // - 0.8 seconds per word (reading time)
+    // - 1.5 seconds per word (speaking time with pauses)
+    // - Add 3 seconds buffer for thinking/starting
+    // - Minimum 8 seconds, maximum 25 seconds
+    
+    const baseTime = Math.max(
+      8, // Minimum 8 seconds
+      Math.min(
+        25, // Maximum 25 seconds
+        (words * 1.5) + 3 // 1.5s per word + 3s buffer
+      )
+    )
+    
+    console.log('⏱️ Adaptive timer calculated:', {
+      sentence: targetSentence,
+      words,
+      calculatedTime: baseTime,
+      formula: `(${words} words × 1.5s) + 3s buffer = ${baseTime}s`
+    })
+    
+    return Math.round(baseTime)
+  }, [targetSentence])
 
   // Helper function for force restart (same as Force Restart button)
   const forceRestartRecording = async () => {
@@ -142,10 +178,21 @@ const SpeechRecognition = ({
 
       const recognition = recognitionRef.current
       
-      // Optimized configuration based on mode
-      if (isAndroidChrome) {
-        // Android Chrome: Stable hold-to-speak configuration
-        recognition.continuous = microphoneMode === 'toggle' // Only continuous for toggle mode
+      // Optimized configuration for timer mode (maximum stability)
+      if (microphoneMode === 'timer') {
+        // Timer mode: Simple, stable configuration for all devices
+        recognition.continuous = false // Single result mode for stability
+        recognition.interimResults = true
+        recognition.lang = 'en-US'
+        
+        // Minimal configuration for maximum compatibility
+        // @ts-expect-error non-standard properties
+        recognition.maxAlternatives = 1
+        
+        console.log('⏱️ Timer mode: Stable configuration for all devices')
+      } else if (isAndroidChrome) {
+        // Android Chrome: Stable hold-to-speak configuration (fallback)
+        recognition.continuous = microphoneMode === 'toggle'
         recognition.interimResults = true
         recognition.lang = 'en-US'
         
@@ -155,9 +202,9 @@ const SpeechRecognition = ({
         // @ts-expect-error non-standard properties
         recognition.serviceURI = undefined
         
-        console.log('🤖 Android Chrome: Stable hold-to-speak mode activated')
+        console.log('🤖 Android Chrome: Stable configuration')
       } else {
-        // Desktop/other devices: Standard configuration
+        // Desktop/other devices: Standard configuration (fallback)
         recognition.continuous = microphoneMode === 'toggle'
         recognition.interimResults = true
         recognition.lang = 'en-US'
@@ -206,8 +253,8 @@ const SpeechRecognition = ({
           }
         }
 
-        // For all devices in toggle mode or mobile hold mode: accumulate results
-        if (microphoneMode === 'toggle' || microphoneMode === 'hold') {
+        // For timer mode and other modes: accumulate results
+        if (microphoneMode === 'timer' || microphoneMode === 'toggle' || microphoneMode === 'hold') {
           if (finalTranscript) {
             // Add to accumulated transcript with space separator
             const newText = finalTranscript.trim()
@@ -229,12 +276,20 @@ const SpeechRecognition = ({
             clearTimeout(silenceTimeoutRef.current)
           }
           
-          // Calculate adaptive timeout based on target sentence length and mode
-          const targetWords = targetSentence.split(' ').length
-          const baseTimeout = microphoneMode === 'toggle' ? 3000 : 1500 // Shorter for hold mode
-          const adaptiveTimeout = microphoneMode === 'toggle' 
-            ? Math.max(baseTimeout, Math.min(targetWords * 600, 10000)) // 3-10 seconds for toggle
-            : Math.max(baseTimeout, Math.min(targetWords * 400, 5000))   // 1.5-5 seconds for hold
+          // Calculate adaptive timeout based on mode
+          let adaptiveTimeout: number
+          
+          if (microphoneMode === 'timer') {
+            // Timer mode: No silence timeout, let the timer handle it
+            adaptiveTimeout = calculateAdaptiveTimer * 1000 // Convert to milliseconds
+          } else {
+            // Other modes: Calculate based on target sentence length
+            const targetWords = targetSentence.split(' ').length
+            const baseTimeout = microphoneMode === 'toggle' ? 3000 : 1500
+            adaptiveTimeout = microphoneMode === 'toggle' 
+              ? Math.max(baseTimeout, Math.min(targetWords * 600, 10000)) // 3-10 seconds for toggle
+              : Math.max(baseTimeout, Math.min(targetWords * 400, 5000))   // 1.5-5 seconds for hold
+          }
           
           silenceTimeoutRef.current = setTimeout(() => {
             console.log('🔇 Silence detected, processing accumulated result')
@@ -312,7 +367,20 @@ const SpeechRecognition = ({
           timeoutRef.current = null
         }
 
-        // Stable Android handling for hold-to-speak mode
+        // Timer mode: Simple handling, no restarts needed
+        if (microphoneMode === 'timer' && isRecordingRef.current) {
+          console.log('⏱️ Timer mode: Recognition ended, processing results')
+          const hasAccumulatedText = accumulatedTranscriptRef.current.trim().length > 0
+          
+          if (hasAccumulatedText) {
+            processAccumulatedResult()
+          }
+          
+          // Don't restart in timer mode - let the timer control everything
+          return
+        }
+        
+        // Stable Android handling for other modes
         if (androidMode && isRecordingRef.current) {
           const timeSinceLastSuccess = Date.now() - lastSuccessTimeRef.current
           const hasAccumulatedText = accumulatedTranscriptRef.current.trim().length > 0
@@ -567,6 +635,9 @@ const SpeechRecognition = ({
       if (androidRestartTimeoutRef.current) {
         clearTimeout(androidRestartTimeoutRef.current)
       }
+      
+      // Clear timer-specific timeouts
+      stopTimer()
 
       // Reset all recording state
       isRecordingRef.current = false
@@ -626,9 +697,69 @@ const SpeechRecognition = ({
     return Math.round((matches / maxLength) * 100)
   }
 
+  // Timer mode functions
+  const startTimer = () => {
+    const duration = calculateAdaptiveTimer
+    setRecordingTimeLeft(duration)
+    setIsTimerActive(true)
+    
+    console.log(`⏱️ Starting ${duration}s timer for sentence: "${targetSentence}"`)
+    
+    // Update countdown every second
+    timerIntervalRef.current = setInterval(() => {
+      setRecordingTimeLeft(prev => {
+        if (prev <= 1) {
+          // Timer finished
+          stopTimerRecording()
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    
+    // Set absolute timeout as backup
+    adaptiveTimerRef.current = setTimeout(() => {
+      stopTimerRecording()
+    }, duration * 1000)
+  }
+  
+  const stopTimer = () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current)
+      timerIntervalRef.current = null
+    }
+    if (adaptiveTimerRef.current) {
+      clearTimeout(adaptiveTimerRef.current)
+      adaptiveTimerRef.current = null
+    }
+    setIsTimerActive(false)
+    setRecordingTimeLeft(0)
+  }
+  
+  const stopTimerRecording = () => {
+    console.log('⏱️ Timer finished, stopping recording')
+    stopTimer()
+    
+    // Process any accumulated results
+    if (accumulatedTranscriptRef.current.trim()) {
+      processAccumulatedResult()
+    }
+    
+    // Stop recognition and update state
+    isRecordingRef.current = false
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop()
+      } catch (error) {
+        console.log('Recognition already stopped')
+      }
+    }
+    onStopRecording()
+  }
+
   const startRecording = async () => {
     console.log('🎯 Starting recording process...')
-    console.log('States:', { isSecure, isSupported, isRecording, hasPermission })
+    console.log('States:', { isSecure, isSupported, isRecording, hasPermission, microphoneMode })
 
     if (!isSecure) {
       console.error('❌ Not secure context')
@@ -710,6 +841,12 @@ const SpeechRecognition = ({
         // Call onStartRecording first to update UI
         onStartRecording()
 
+        // Timer mode: Start timer and recognition together
+        if (microphoneMode === 'timer') {
+          startTimer()
+          console.log('⏱️ Timer mode: Starting adaptive timer')
+        }
+
         // Ubuntu-specific: Add a small delay before starting
         await new Promise(resolve => setTimeout(resolve, 200))
 
@@ -718,15 +855,24 @@ const SpeechRecognition = ({
         console.log('✅ Speech recognition start() called successfully')
 
         // Set timeout based on microphone mode
-        const timeoutDuration = microphoneMode === 'toggle' 
-          ? 45000 // 45 seconds for toggle mode (longer for user control)
-          : 15000 // 15 seconds for hold mode (shorter, user controls duration)
+        let timeoutDuration: number
+        if (microphoneMode === 'timer') {
+          timeoutDuration = (calculateAdaptiveTimer + 2) * 1000 // Timer + 2s buffer
+        } else if (microphoneMode === 'toggle') {
+          timeoutDuration = 45000 // 45 seconds for toggle mode
+        } else {
+          timeoutDuration = 15000 // 15 seconds for hold mode
+        }
           
         timeoutRef.current = setTimeout(() => {
           console.log(`⏰ Recording timeout after ${timeoutDuration/1000} seconds`)
           if (recognitionRef.current && isRecordingRef.current) {
-            isRecordingRef.current = false
-            recognitionRef.current.stop()
+            if (microphoneMode === 'timer') {
+              stopTimerRecording()
+            } else {
+              isRecordingRef.current = false
+              recognitionRef.current.stop()
+            }
           }
         }, timeoutDuration)
       } catch (error) {
@@ -743,6 +889,12 @@ const SpeechRecognition = ({
 
   const stopRecording = () => {
     console.log('🛑 Stopping recording...')
+
+    // Timer mode: Use timer stop function
+    if (microphoneMode === 'timer') {
+      stopTimerRecording()
+      return
+    }
 
     // Clear all timeouts
     if (timeoutRef.current) {
@@ -886,8 +1038,11 @@ const SpeechRecognition = ({
               <p className="text-gray-600 mb-2 text-sm sm:text-base">
                 {isRecording ? (
                   <span>
-                    Listening... Speak clearly!
-                    {restartAttempts > 0 && (
+                    {microphoneMode === 'timer' 
+                      ? 'Timer running... Speak clearly!' 
+                      : 'Listening... Speak clearly!'
+                    }
+                    {restartAttempts > 0 && microphoneMode !== 'timer' && (
                       <span className="block text-xs text-orange-600 mt-1">
                         🔄 Reconnecting... (attempt {restartAttempts}/10)
                       </span>
@@ -895,8 +1050,17 @@ const SpeechRecognition = ({
                   </span>
                 ) : (
                   <span>
-                    <span className="hidden sm:inline">Click the microphone to start recording</span>
-                    <span className="sm:hidden">Tap microphone to record</span>
+                    {microphoneMode === 'timer' ? (
+                      <span>
+                        <span className="hidden sm:inline">Click to start {calculateAdaptiveTimer}s timer</span>
+                        <span className="sm:hidden">Tap for {calculateAdaptiveTimer}s timer</span>
+                      </span>
+                    ) : (
+                      <span>
+                        <span className="hidden sm:inline">Click the microphone to start recording</span>
+                        <span className="sm:hidden">Tap microphone to record</span>
+                      </span>
+                    )}
                   </span>
                 )}
               </p>
@@ -907,13 +1071,15 @@ const SpeechRecognition = ({
               <div className="text-center mb-2">
                 <p className="text-gray-600 text-sm sm:text-base">
                   <span>
-                    {androidMode 
-                      ? 'Android Mode: Keep holding and speaking...' 
-                      : microphoneMode === 'hold' 
-                        ? 'Keep holding and speaking...' 
-                        : 'Recording... Speak your sentence!'
+                    {microphoneMode === 'timer' 
+                      ? 'Timer Mode: Speaking...' 
+                      : androidMode 
+                        ? 'Android Mode: Keep holding and speaking...' 
+                        : microphoneMode === 'hold' 
+                          ? 'Keep holding and speaking...' 
+                          : 'Recording... Speak your sentence!'
                     }
-                    {restartAttempts > 0 && (
+                    {restartAttempts > 0 && microphoneMode !== 'timer' && (
                       <span className="block text-xs text-orange-600 mt-1">
                         {androidMode 
                           ? `🤖 Android reconnecting... (${restartAttempts}/15)`
@@ -923,22 +1089,39 @@ const SpeechRecognition = ({
                     )}
                   </span>
                 </p>
-                {/* Progress indicator */}
-                <div className="mt-2">
-                  <div className="text-xs text-blue-600">
-                    {androidMode 
-                      ? `🤖 Ultra-robust hold mode • Connection: ${isAndroidStable ? 'Stable' : 'Reconnecting'}`
-                      : microphoneMode === 'toggle' 
-                        ? '🔄 Collecting speech... Click Stop when finished'
-                        : '📱 Collecting speech... Release when done'
-                    }
-                  </div>
-                  {androidMode && connectionAttempts > 0 && (
-                    <div className="text-xs text-orange-500 mt-1">
-                      Connection attempts: {connectionAttempts} • Keep speaking!
+                
+                {/* Timer Display */}
+                {microphoneMode === 'timer' && isTimerActive && (
+                  <div className="mt-3 mb-2">
+                    <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full border-4 border-blue-500">
+                      <span className="text-2xl font-bold text-blue-600">
+                        {recordingTimeLeft}
+                      </span>
                     </div>
-                  )}
-                </div>
+                    <p className="text-xs text-blue-600 mt-2">
+                      ⏱️ Adaptive timer: {calculateAdaptiveTimer}s for this sentence
+                    </p>
+                  </div>
+                )}
+                
+                {/* Progress indicator for non-timer modes */}
+                {microphoneMode !== 'timer' && (
+                  <div className="mt-2">
+                    <div className="text-xs text-blue-600">
+                      {androidMode 
+                        ? `🤖 Ultra-robust hold mode • Connection: ${isAndroidStable ? 'Stable' : 'Reconnecting'}`
+                        : microphoneMode === 'toggle' 
+                          ? '🔄 Collecting speech... Click Stop when finished'
+                          : '📱 Collecting speech... Release when done'
+                      }
+                    </div>
+                    {androidMode && connectionAttempts > 0 && (
+                      <div className="text-xs text-orange-500 mt-1">
+                        Connection attempts: {connectionAttempts} • Keep speaking!
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

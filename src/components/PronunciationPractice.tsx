@@ -47,31 +47,19 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
     }
   }, [])
 
-  // Determine microphone behavior based on device and user preference
+  // NEW: All devices use timer-based recording for maximum stability
   const microphoneBehavior = useMemo(() => {
     if (holdToSpeak !== null) {
-      // User has manually set preference
-      return holdToSpeak ? 'hold' : 'toggle'
+      // User has manually set preference - but we'll use timer for all
+      return 'timer'
     }
     
-    // Android Chrome: Use hold-to-speak (more stable than toggle mode)
-    if (deviceInfo.isAndroidChrome) {
-      console.log('📱 Auto-detected Android Chrome: using hold-to-speak (more stable)')
-      return 'hold'
-    } 
-    // Other mobile devices: Also use hold-to-speak for consistency
-    else if (deviceInfo.isMobile) {
-      console.log('📱 Auto-detected mobile device: using hold-to-speak')
-      return 'hold'
-    } 
-    // Desktop: Use toggle mode
-    else {
-      console.log('💻 Auto-detected desktop/laptop: using tap-to-toggle')
-      return 'toggle'
-    }
+    // All devices: Use timer-based recording (most stable for Android)
+    console.log('🎯 All devices: using click-to-start with adaptive timer (maximum stability)')
+    return 'timer'
   }, [holdToSpeak, deviceInfo])
 
-  const isHoldMode = microphoneBehavior === 'hold'
+  const isTimerMode = microphoneBehavior === 'timer'
 
   const currentSentence = lesson.sentences[currentSentenceIndex]
   const progress = ((currentSentenceIndex + (showResult ? 1 : 0)) / lesson.sentences.length) * 100
@@ -249,7 +237,7 @@ const PronunciationPractice = ({ lesson, onBack }: PronunciationPracticeProps) =
               showResult={showResult}
               hideButton={true}
               deviceType={deviceInfo.isDesktop ? 'desktop' : 'mobile'}
-              microphoneMode={microphoneBehavior}
+              microphoneMode="timer"
             />
 
             {/* Result Display */}

@@ -195,6 +195,7 @@ const ArticlePractice = ({ onBack }: ArticlePracticeProps) => {
           onResult={handleRecognitionResult}
           showResult={showResult}
           hideButton={true}
+          microphoneMode="timer"
         />
 
         {/* Result Display */}
